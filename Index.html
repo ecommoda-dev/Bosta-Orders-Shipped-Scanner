@@ -562,6 +562,24 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
 }
 .login-confirm-row { display: flex; gap: 8px; }
 
+/* زرار الإعدادات داخل login-card */
+.login-settings-btn {
+  position:      absolute;
+  top:           14px;
+  left:          14px;
+  background:    none;
+  border:        1px solid var(--border);
+  color:         var(--text-sub);
+  font-size:     12px;
+  font-weight:   600;
+  padding:       5px 10px;
+  border-radius: 7px;
+  cursor:        pointer;
+  font-family:   var(--font);
+  transition:    background .15s, color .15s;
+}
+.login-settings-btn:hover { background: var(--bg); color: var(--text); }
+
 /* ── Responsive ─────────────────────────────────────────────── */
 @media (max-width: 600px) {
   .header-brand p { display: none; }
@@ -573,7 +591,8 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
 
 <!-- ══ LOGIN OVERLAY ══════════════════════════════════════════════════════════ -->
 <div id="loginOverlay">
-  <div class="login-card">
+  <div class="login-card" style="position:relative;">
+    <button class="login-settings-btn" onclick="openSettings()">⚙️ الإعدادات</button>
     <div class="login-icon">📦</div>
     <div class="login-title">Bosta Orders Shipped Scanner</div>
     <div class="login-sub" id="loginSub">اختر اسمك للمتابعة</div>
