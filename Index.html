@@ -543,7 +543,7 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
   <div class="app-header-btns">
     <button class="hbtn active-user" id="activeUserBtn" onclick="doLogout()">👤 —</button>
     <button class="hbtn" id="aboutBtn" onclick="openAbout()">ℹ️ عن الأداة</button>
-    <button class="hbtn ver-btn" onclick="openChangelog()">v3.0.2 📋</button>
+    <button class="hbtn ver-btn" onclick="openChangelog()">v3.0.3 📋</button>
     <button class="hbtn" id="settingsBtn" onclick="openSettings()">⚙️ الإعدادات</button>
   </div>
 </div>
@@ -587,7 +587,17 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
 
       <div class="cl-version-block">
         <div class="cl-version-row">
-          <span class="cl-ver-badge">v3.0.2</span>
+          <span class="cl-ver-badge">v3.0.3</span>
+          <span class="cl-ver-date">18-08-2026</span>
+        </div>
+        <ul class="cl-items">
+          <li class="cl-item"><span class="cl-tag fix">إصلاح</span><span>فشل كتابة الميتافيلد على شوبيفاي — الـ mutation كانت بتطلب حقل <code style="font-family:inherit;">ownerId</code> غير موجود على النوع <code style="font-family:inherit;">Metafield</code>، والصحيح <code style="font-family:inherit;">owner { ... on Order { id } }</code></span></li>
+        </ul>
+      </div>
+
+      <div class="cl-version-block">
+        <div class="cl-version-row">
+          <span class="cl-ver-badge old">v3.0.2</span>
           <span class="cl-ver-date">18-08-2026</span>
         </div>
         <ul class="cl-items">
