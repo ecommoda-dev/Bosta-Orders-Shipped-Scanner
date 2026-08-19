@@ -543,7 +543,7 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
   <div class="app-header-btns">
     <button class="hbtn active-user" id="activeUserBtn" onclick="doLogout()">👤 —</button>
     <button class="hbtn" id="aboutBtn" onclick="openAbout()">ℹ️ عن الأداة</button>
-    <button class="hbtn ver-btn" onclick="openChangelog()">v3.0.3 📋</button>
+    <button class="hbtn ver-btn" onclick="openChangelog()">v3.1.0 📋</button>
     <button class="hbtn" id="settingsBtn" onclick="openSettings()">⚙️ الإعدادات</button>
   </div>
 </div>
@@ -587,7 +587,19 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
 
       <div class="cl-version-block">
         <div class="cl-version-row">
-          <span class="cl-ver-badge">v3.0.3</span>
+          <span class="cl-ver-badge">v3.1.0</span>
+          <span class="cl-ver-date">18-08-2026</span>
+        </div>
+        <ul class="cl-items">
+          <li class="cl-item"><span class="cl-tag new">جديد</span><span>بعد نجاح كتابة <code style="font-family:inherit;">Shipped</code> (S1 أو S2) بيتم عمل <code style="font-family:inherit;">fulfillmentCreate</code> تلقائيًا لكل <code style="font-family:inherit;">fulfillmentOrder</code> بحالة <code style="font-family:inherit;">OPEN</code> على نفس الأوردر — نفس الـ pattern المعتمد في أداة Order Status Updater</span></li>
+          <li class="cl-item"><span class="cl-tag change">تغيير</span><span>فشل الفلفلمنت لا يُلغي حالة S1/S2 اللي اتكتبت بنجاح — بيظهر كتحذير منفصل (🟠 الفلفلمنت فشل) تحت البادج الأخضر في عمود "تحديث شوبيفاي"، وبيتسجل في <code style="font-family:inherit;">extra.fulfillment</code> بسجل D1</span></li>
+          <li class="cl-item"><span class="cl-tag change">تغيير</span><span>عمود جديد "الفلفلمنت" في تصدير XLSX للنتائج</span></li>
+        </ul>
+      </div>
+
+      <div class="cl-version-block">
+        <div class="cl-version-row">
+          <span class="cl-ver-badge old">v3.0.3</span>
           <span class="cl-ver-date">18-08-2026</span>
         </div>
         <ul class="cl-items">
@@ -687,7 +699,9 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
         <div class="about-sec-body">
           <p><strong>الهدف:</strong> مسح أرقام تتبع بوسطة، التأكد من حالة الأوردر
             الحالية (S1/S2) على شوبيفاي، ثم كتابة الحالة التالية <code>Shipped</code>
-            على الميتافيلد الصحيح فقط للأوردرات المتوافقة.</p>
+            على الميتافيلد الصحيح فقط للأوردرات المتوافقة — وعمل Fulfill تلقائي
+            للمنتجات المتبقية على الأوردر لو لسه فيه <code>fulfillmentOrder</code>
+            بحالة <code>OPEN</code>.</p>
           <p><strong>المستخدمون المستهدفون:</strong> فريق المخزن/الشحن — لحظة تسليم
             الشحنات (ذاهبة أو مرتجع/استبدال) لمندوب بوسطة.</p>
 
@@ -710,14 +724,14 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
             <li>مراجعة النتائج — الأوردرات المتوافقة محددة تلقائيًا، غير المتوافقة
               مرفوضة مع السبب.</li>
             <li>تحديث شوبيفاي — إعادة تحقق من الحالة وقت الكتابة + كتابة
-              الميتافيلد + تسجيل في D1.</li>
+              الميتافيلد + Fulfill تلقائي للأوردر (لو لسه محتاج) + تسجيل في D1.</li>
           </ol>
 
           <h4>الـ Endpoints الرئيسية</h4>
           <table>
             <tr><th>action</th><th>الوصف</th></tr>
             <tr><td><code>lookup</code></td><td>بوسطة + فحص شوبيفاي S1/S2 دفعة واحدة</td></tr>
-            <tr><td><code>update</code></td><td>إعادة تحقق + <code>metafieldsSet</code> + D1 log</td></tr>
+            <tr><td><code>update</code></td><td>إعادة تحقق + <code>metafieldsSet</code> + <code>fulfillmentCreate</code> (لو فيه OPEN fulfillmentOrders) + D1 log</td></tr>
             <tr><td><code>get_logs</code> / <code>get_logs_count</code> / <code>get_logs_export</code></td><td>سجل التحديثات (بحث + صفحات + تصدير)</td></tr>
           </table>
         </div>
@@ -730,6 +744,7 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
           <ul>
             <li><code>§AUTH</code> — Universal D1 Auth (check_employee / register_pin / verify_employee / log_logout)</li>
             <li><code>§TOOL-JS::startLookup/startUpdate</code> — بوسطة + شوبيفاي S1/S2 + metafieldsSet</li>
+            <li><code>§SHOPIFY::createFulfillment</code> — fulfillmentCreate لكل OPEN fulfillmentOrder بعد نجاح كتابة Shipped (§UPDATE::fulfillAfterWrite)</li>
             <li><code>§LOG-ENDPOINTS</code> — get_logs / get_logs_count / get_logs_export (server-side pagination)</li>
           </ul>
 
@@ -748,6 +763,10 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
             <li>الـ Worker يعيد التحقق من S1/S2 مرتين: مرة عند الاستعلام (للعرض) ومرة عند
               الضغط على "تحديث شوبيفاي" (دفاعي — لو الحالة اتغيرت في الأثناء).</li>
             <li>الأوردرات المرفوضة غير قابلة للتحديد (checkbox معطّل) ومظللة بخلفية حمراء خفيفة.</li>
+            <li>الفلفلمنت بيحصل بعد كتابة الميتافيلد مباشرة — لو فشل، حالة S1/S2 تفضل
+              مكتوبة (مش بترجع) والفشل بيظهر كتحذير 🟠 منفصل تحت البادج الأخضر، مش
+              كفشل كامل للصف. لو مفيش OPEN fulfillmentOrders (الأوردر متعمله fulfill
+              من قبل) بيتجاهل الخطوة دي بصمت.</li>
           </ul>
         </div>
       </details>
@@ -1642,7 +1661,7 @@ function renderResults() {
 
   tbody.innerHTML = resultsData.map((r, i) => {
     const stateBadge   = getStateBadge(r.stateCode, r.state);
-    const shopifyCell  = getShopifyCell(r.shopifyStatus, r.failReason);
+    const shopifyCell  = getShopifyCell(r.shopifyStatus, r.failReason, r.fulfillment);
     const orderCell    = r.found
       ? orderLink(r.businessRef, r.orderId)
       : `<span class="badge badge-red">غير موجود</span>`;
@@ -1704,9 +1723,20 @@ function getStateBadge(code, label) {
   return `<span class="badge ${cls}">${label}</span>`;
 }
 
-function getShopifyCell(status, failReason) {
+function getShopifyCell(status, failReason, fulfillment) {
   if (!status) return `<span class="badge badge-neutral">—</span>`;
-  if (status === 'success') return `<span class="badge badge-green">✓ تم</span>`;
+  if (status === 'success') {
+    let html = `<span class="badge badge-green">✓ تم</span>`;
+    // ⚠️ نجاح كتابة S1/S2 مستقل عن نجاح الفلفلمنت — فشل الفلفلمنت بيتعرض
+    // كتحذير منفصل تحت البادج الأخضر، مش كفشل للصف كله (الحالة بالفعل اتكتبت).
+    if (fulfillment?.attempted && fulfillment?.error) {
+      html += `<br><span class="badge badge-amber" style="margin-top:4px;">⚠️ الفلفلمنت فشل</span>`
+            + `<br><span class="reject-reason">${fulfillment.error}</span>`;
+    } else if (fulfillment?.attempted && fulfillment?.created) {
+      html += `<br><span class="badge badge-neutral" style="margin-top:4px; font-size:11px;">📦 Fulfilled</span>`;
+    }
+    return html;
+  }
   if (status === 'error') {
     // ⚠️ سبب الفشل لازم يظهر هنا — من غيره الموظف (وأنا) مش هنعرف السبب الحقيقي
     return `<span class="badge badge-red">✗ فشل</span>`
@@ -1792,19 +1822,23 @@ async function startUpdate() {
       if (res) {
         r.shopifyStatus = res.success ? 'success' : 'error';
         if (!res.success && res.error) r.failReason = res.error; // سبب فشل الكتابة — منفصل عن rejectReason بتاع الاستعلام
+        r.fulfillment   = res.fulfillment || null; // { attempted, created, error } — راجع getShopifyCell
         const cell = document.getElementById(`shopify-${resultsData.indexOf(r)}`);
-        if (cell) cell.innerHTML = getShopifyCell(r.shopifyStatus, r.failReason);
+        if (cell) cell.innerHTML = getShopifyCell(r.shopifyStatus, r.failReason, r.fulfillment);
         done++;
         progressTxt.textContent = `${done.toLocaleString('en-US')} / ${items.length.toLocaleString('en-US')}`;
         progressBar.style.width = `${Math.round(done / items.length * 100)}%`;
       }
     }
 
-    const succeeded = data.summary?.succeeded || 0;
-    const failed    = data.summary?.failed    || 0;
+    const succeeded  = data.summary?.succeeded || 0;
+    const failed     = data.summary?.failed    || 0;
+    const fulfillWarn = (data.results || []).filter(r => r.fulfillment?.attempted && r.fulfillment?.error).length;
     showToast(
-      `تم تحديث ${succeeded.toLocaleString('en-US')}${failed ? ' | فشل: ' + failed : ''}`,
-      succeeded > 0 ? 'success' : 'error'
+      `تم تحديث ${succeeded.toLocaleString('en-US')}`
+        + (failed ? ' | فشل: ' + failed : '')
+        + (fulfillWarn ? ' | ⚠️ فلفلمنت فشل: ' + fulfillWarn : ''),
+      succeeded > 0 ? (fulfillWarn ? 'error' : 'success') : 'error'
     );
   } catch (err) {
     showToast(`خطأ: ${err.message}`, 'error');
@@ -2051,6 +2085,7 @@ async function exportResultsXLSX() {
     { header: 'التحديث المطلوب', key: 'target',      width: 18 },
     { header: 'سبب الرفض',       key: 'reject',      width: 24 },
     { header: 'تحديث شوبيفاي',   key: 'shopify',     width: 16 },
+    { header: 'الفلفلمنت',       key: 'fulfill',     width: 22 },
     { header: 'التاريخ',         key: 'dt',          width: 14 },
   ];
 
@@ -2066,6 +2101,9 @@ async function exportResultsXLSX() {
       target:    r.valid ? (r.machine === 'S1' ? 'S1 → Shipped' : '[S-2] → Shipped') : '—',
       reject:    r.rejectReason || r.failReason || '—',
       shopify:   r.shopifyStatus === 'success' ? 'تم التحديث' : r.shopifyStatus === 'error' ? 'فشل' : '—',
+      fulfill:   !r.fulfillment?.attempted ? '—'
+               : r.fulfillment.error ? `فشل: ${r.fulfillment.error}`
+               : `تم (${r.fulfillment.created})`,
       dt:        nowStr,
     });
   });
