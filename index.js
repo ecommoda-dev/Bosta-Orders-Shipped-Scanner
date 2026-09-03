@@ -3,6 +3,7 @@
 // Auth/D1 tool value : bosta_tracker | Types: login / logout  (unchanged — Universal D1 Auth)
 // Status-write log    : tool = metafields_change | type = update
 //                       (extra.sourceTool = "bosta_orders_shipped_scanner" — see §CONSTANTS)
+// Rejected log        : tool = metafields_change | type = rejected  (v3.3.0 — no Shopify write)
 //
 // v3.1.0 — إضافة Fulfill تلقائي بعد كتابة Shipped (S1 أو S2):
 //   بعد نجاح metafieldsSet لأي أوردر، لو عنده fulfillmentOrders بحالة OPEN
@@ -13,6 +14,18 @@
 //   النتيجة + في extra.fulfillment بالـ D1 log، مش كفشل كامل للصف.
 //   لو مفيش fulfillmentOrders بحالة OPEN (الأوردر متعمله fulfill من قبل —
 //   مثلاً إعادة شحن) بيتم تجاهل الخطوة دي بصمت وتكمل كتابة الميتافيلد عادي.
+// v3.3.0 — تسجيل الأوردرات المرفوضة (type = 'rejected'):
+//   الأوردر اللي الانتقال بتاعه مرفوض ما كانش بيسيب أي أثر — لا في السجل ولا
+//   في ملخّص الدفعة، فسؤال "ليه الأوردر ده ما اتشحنش؟" ماكانش ليه إجابة بعد
+//   ما الموظف يقفل الشاشة. دلوقتي `update` بياخد `rejected[]` جنب `items[]`،
+//   بيعيد التحقق منها من شوبيفاي **وقت الكتابة** (نفس الـ fetch — مفيش نداء
+//   زيادة) وبيكتب لكل واحدة صف D1 بـ `type = 'rejected'` و`extra.result =
+//   'rejected'` من غير أي كتابة على شوبيفاي.
+//   ⚠️ الصف اللي بقى **متوافق** بين الاستعلام والكتابة مابيتسجّلش مرفوض —
+//   بيرجع بـ `becameValid` عشان الواجهة تقول للموظف يستعلم تاني. تسجيل سبب
+//   قديم بقى غلط في سجل دائم = بالظبط الفشل الصامت اللي الأداة دي بتتجنّبه.
+//   ⚠️ `items[]` بقت اختيارية **لو** فيه `rejected[]` — دفعة كلها مرفوضة
+//   لازم تسيب أثر برضه.
 // v3.2.1 — CORS اتحوّل من Option A (wildcard) لـ Option B (ALLOWED_ORIGINS)
 //   على حساب EcomModa على GitHub Pages بس — قرار أحمد 03-09-2026، عشان الأداة
 //   بقت بتكتب على شوبيفاي زي باقي أدوات الكتابة. ومعاه: الافتراضي في json()
@@ -47,6 +60,7 @@
 //   ?action=lookup           POST  — Bosta search + Shopify S1/S2 batch check + transition validation
 //   ?action=update           POST  — إعادة تحقق من الحالة وقت الكتابة + metafieldsSet
 //                                    + fulfillmentCreate (لو فيه OPEN fulfillmentOrders) + D1 log
+//                                    + rejected[] → D1 log بـ type='rejected' من غير أي كتابة
 //   ?action=get_logs         GET  — server-side filters (employees/types/search/dateFrom/dateTo) + pagination
 //   ?action=get_logs_count   GET  — total count matching the same filters
 //   ?action=get_logs_export  GET  — full export up to LOG_EXPORT_MAX + { cap, total, truncated }
@@ -59,7 +73,7 @@
 // ══════════════════════════════════════════════════════════════
 // §CONSTANTS
 // ══════════════════════════════════════════════════════════════
-const WORKER_VERSION = '3.2.1';                             // ?action=get_config — الواجهة بتقارنه بـ MIN_WORKER_VERSION
+const WORKER_VERSION = '3.3.0';                             // ?action=get_config — الواجهة بتقارنه بـ MIN_WORKER_VERSION
 const TOOL_NAME      = 'bosta_tracker';                    // login/logout D1 logging only
 const SOURCE_TOOL     = 'bosta_orders_shipped_scanner';     // tag used in extra.sourceTool for status-write logs
 const SOURCE_TOOL_LIKE = `%"sourceTool":"${SOURCE_TOOL}"%`;
@@ -276,8 +290,13 @@ function logParamsFrom(url, tool) {
 // ⚠️ السجل التاريخي: قبل v2.0.0 كانت الأداة بتسجل تحت tool='bosta_tracker'
 // و type='tagged' (نظام التاجات القديم). الشرط تحت بيضم النوعين مع بعض عشان
 // السجل القديم يفضل ظاهر بعد التحديث — من غيره تاب السجل بيبان فاضي تمامًا.
+// ⚠️ `type = 'rejected'` (v3.3.0) لازم يفضل جوّه النطاق ده — الصفوف دي بتتكتب
+// تحت نفس الـ tool ونفس الـ sourceTool، ولو النطاق فضل `type = 'update'` بس
+// الأداة تبقى بتكتب صفوف السجل بيرفض يعرضها: كتابة صامتة في اتجاه معكوس.
+// ⚠️ وخط الأساس في CLAUDE.md بيعدّ `type = 'update'` **بس** — عشان كده الرفض
+// اتحط في نوع مستقل مش في `update` بعلم: عدّاد الكتابة الفعلية يفضل نضيف.
 const LOG_SCOPE_SQL = `(
-     (tool = 'metafields_change' AND type = 'update' AND extra LIKE ?)
+     (tool = 'metafields_change' AND type IN ('update','rejected') AND extra LIKE ?)
   OR (tool = 'bosta_tracker'     AND type = 'tagged')
 )`;
 
@@ -1030,9 +1049,14 @@ async function handleUpdate(request, env) {
   try { body = await request.json(); }
   catch { return json({ error: 'Invalid JSON' }, 400, request); }
 
-  const { items, employee } = body;
-  if (!Array.isArray(items) || items.length === 0)
-    return json({ error: 'items[] مطلوب' }, 400, request);
+  const { employee } = body;
+  const items    = Array.isArray(body.items)    ? body.items    : [];
+  const rejected = Array.isArray(body.rejected) ? body.rejected : [];
+
+  // دفعة كلها مرفوضة مالهاش `items` — ومع ذلك لازم تسيب أثر في السجل، فالشرط
+  // بقى "واحدة من الاتنين على الأقل" مش "items إجباري".
+  if (!items.length && !rejected.length)
+    return json({ error: 'items[] أو rejected[] مطلوب' }, 400, request);
 
   assertEnv(env, 'shopify');
 
@@ -1040,7 +1064,9 @@ async function handleUpdate(request, env) {
   try { token = await getAccessToken(env); }
   catch (err) { return json({ error: `Token error: ${err.message}` }, 500, request); }
 
-  const orderNames = items.map(it => it.orderName);
+  // المرفوض بيتقرا من **نفس** الـ fetch — إعادة التحقق وقت الكتابة مش بتكلّف
+  // نداء زيادة، والسبب اللي بيتسجّل بيبقى الحالة دلوقتي مش حالة الاستعلام.
+  const orderNames = [...items, ...rejected].map(it => it.orderName);
   let freshMap;
   try {
     freshMap = await fetchShopifyOrdersByNames(env, token, orderNames);
@@ -1203,12 +1229,102 @@ async function handleUpdate(request, env) {
     }
   }
 
+  const rejectedResults = await logRejectedItems(env, employee, rejected, freshMap);
+
   const succeeded = results.filter(r => r.status === 'success').length;
   const warned    = results.filter(r => r.status === 'warning').length;
   const failed    = results.filter(r => r.status === 'error').length;
   return json({
     ok: true,
     results,
-    summary: { total: items.length, succeeded, warned, failed },
+    rejected: rejectedResults,
+    summary: {
+      total:     items.length,
+      succeeded, warned, failed,
+      // مرفوض **مش** فشل: مفيش كتابة اتحاولت أصلاً. عدّاد لوحده عشان ما يتلمّش
+      // على `failed` في الملخّص اللي الموظف بيقراه.
+      rejected:       rejectedResults.filter(r => !r.becameValid).length,
+      rejectedLogged: rejectedResults.filter(r => r.logged === true).length,
+      becameValid:    rejectedResults.filter(r =>  r.becameValid).length,
+    },
   }, 200, request);
+}
+
+// ─── §UPDATE::logRejectedItems ───
+// الأوردر المرفوض ما بيتكتبش عليه أي حاجة — بس بيتسجّل، عشان سؤال "ليه الأوردر
+// ده ما اتشحنش؟" يبقى ليه إجابة بعد ما الموظف يقفل الشاشة.
+//
+// ⚠️ السبب اللي بيتكتب في السجل بيتحسب من `freshMap` (حالة شوبيفاي **دلوقتي**)
+// مش من السبب اللي الواجهة بعتته — ده اتقرا وقت الاستعلام وممكن يكون بقى قديم.
+// ⚠️ والصف اللي بقى **متوافق** بين الاستعلام والكتابة مابيتسجّلش مرفوض خالص:
+// بيرجع بـ `becameValid: true` والواجهة بتقول للموظف يستعلم تاني. صف رفض كذّاب
+// في سجل دائم أسوأ من صف ناقص.
+//
+// ⚠️ فشل D1 هنا بيرجع `logged: false` — مابيرميش. الرفض نفسه معلومة، والدفعة
+// اللي جنبه (كتابة تمّت فعلاً على شوبيفاي) ماينفعش تتحوّل لـ 500 عشان سطر سجل.
+async function logRejectedItems(env, employee, rejectedItems, freshMap) {
+  const out = [];
+
+  for (const item of rejectedItems) {
+    const cleanName = cleanOrderName(item.orderName);
+    const sOrder    = cleanName ? freshMap[cleanName] : null;
+    const isSend    = String(item.orderType || '').trim().toLowerCase() === 'send';
+    const machine   = isSend ? 'S1' : 'S2';
+
+    let reason, valueBefore = null, orderId = null, s1 = null, s2 = null;
+
+    if (!sOrder) {
+      // مش على شوبيفاي دلوقتي — السبب ده حقيقة حالية، مش سبب منقول من الواجهة
+      reason = 'الأوردر غير موجود على شوبيفاي';
+    } else {
+      orderId = sOrder.orderId; s1 = sOrder.s1; s2 = sOrder.s2;
+      const v = validateTransition(item.orderType, sOrder);
+      if (v.valid) {
+        out.push({
+          orderName: `#${cleanName}`, orderId, becameValid: true, logged: false,
+          machine: v.machine, s1, s2,
+          reason: 'بقى متوافق بعد الاستعلام — ما اتسجلش كمرفوض',
+        });
+        continue;
+      }
+      reason      = v.reason;
+      valueBefore = machine === 'S1' ? s1 : s2;
+    }
+
+    let logged = true, logError = null;
+    try {
+      await writeLog(env.DB, {
+        tool:        'metafields_change',
+        type:        'rejected',
+        employee:    employee || null,
+        orderId,
+        orderName:   cleanName ? `#${cleanName}` : (item.orderName || null),
+        valueBefore,
+        valueAfter:  null,               // ⚠️ مفيش قيمة اتكتبت — ولا حتى محاولة
+        notes:       `مرفوض — ${reason}`,
+        extra: {
+          sourceTool:     SOURCE_TOOL,
+          trackingNumber: String(item.trackingNumber || ''),
+          orderType:      item.orderType || '',
+          bostaState:     item.bostaState || null,
+          machine,
+          s1, s2,
+          reason,
+          result:         'rejected',    // ← عمود "النتيجة" في تاب السجل بيقرا ده
+        },
+      });
+    } catch (e) {
+      logged = false; logError = e.message;
+    }
+
+    out.push({
+      orderName: cleanName ? `#${cleanName}` : (item.orderName || ''),
+      orderId, becameValid: false, logged, logError,
+      machine, s1, s2, reason,
+      trackingNumber: String(item.trackingNumber || ''),
+      orderType:      item.orderType || '',
+    });
+  }
+
+  return out;
 }
