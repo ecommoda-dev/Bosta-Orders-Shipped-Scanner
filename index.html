@@ -224,7 +224,7 @@ body {
 .res-overlay.open { display: flex; }
 .res-modal {
   background: var(--surface); border-radius: var(--radius);
-  width: 100%; max-width: 470px;
+  width: 100%; max-width: 520px;
   box-shadow: 0 20px 60px rgba(0,0,0,.22); overflow: hidden;
   animation: modalIn .2s ease;
 }
@@ -243,6 +243,8 @@ body {
 }
 .res-sub b { color: var(--text-primary); }
 .res-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+/* صندوق رابع (مرفوض) بيظهر بس لما يكون فيه مرفوض فعلاً — راجع showUpdateResultModal */
+.res-stats.four { grid-template-columns: repeat(4, 1fr); }
 .res-stat {
   border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--surface-2); padding: 12px 6px; text-align: center;
@@ -251,16 +253,41 @@ body {
 .res-stat.ok   { background: var(--green-light); border-color: var(--green-border); }
 .res-stat.warn { background: var(--amber-light); border-color: var(--amber-border); }
 .res-stat.fail { background: var(--red-light);   border-color: var(--red-border); }
+/* ⚠️ لون مستقل للمرفوض — مش أحمر الفشل: مفيش كتابة اتحاولت وفشلت، فيه كتابة
+   ما كانتش مسموحة أصلاً. لمّ الاتنين على لون واحد بيخلي الموظف يدوّر على عطل
+   مش موجود. */
+.res-stat.rej  { background: var(--purple-light); border-color: var(--purple-border); }
 .res-stat-val { font-size: 22px; font-weight: 800; line-height: 1.2; color: var(--text-primary); }
 .res-stat.ok   .res-stat-val { color: var(--green-dark); }
 .res-stat.warn .res-stat-val { color: var(--amber-dark); }
 .res-stat.fail .res-stat-val { color: var(--red-dark); }
+.res-stat.rej  .res-stat-val { color: var(--purple-dark); }
 .res-stat-lbl { font-size: 11.5px; font-weight: 600; color: var(--text-secondary); margin-top: 4px; }
 .res-note {
   font-size: 12px; font-weight: 700; text-align: center; line-height: 1.6;
   color: var(--amber-dark); background: var(--amber-light);
   border: 1px solid var(--amber-border); border-radius: var(--radius-sm); padding: 8px 10px;
 }
+/* ── تفاصيل المرفوض جوّه النافذة (v3.4) ────────────────────────
+   الرقم لوحده مابيقولش "ليه" — والموظف بيقفل النافذة وبعدين يتسأل عن الأوردر
+   ده بالظبط. التفاصيل هنا هي الإجابة، مش في الجدول اللي وراها. */
+.res-rej {
+  border: 1px solid var(--purple-border); border-radius: var(--radius-sm);
+  background: var(--purple-light); overflow: hidden;
+}
+.res-rej-hdr {
+  padding: 8px 12px; font-size: 12.5px; font-weight: 800; color: var(--purple-dark);
+  border-bottom: 1px solid var(--purple-border);
+}
+.res-rej-list { max-height: 190px; overflow-y: auto; background: var(--surface); }
+.res-rej-item {
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  font-size: 12px; line-height: 1.7;
+}
+.res-rej-item:last-child { border-bottom: none; }
+.res-rej-top  { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 700; }
+.res-rej-why  { color: var(--red-dark); font-weight: 600; font-size: 11.5px; }
+.res-rej-meta { color: var(--text-secondary); font-weight: 600; font-size: 11px; }
 .res-ftr { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 
 /* بانر إعادة التحقق قبل الكتابة — أصفر، مش أحمر: مفيش حاجة فشلت، فيه كتابة اتمنعت */
@@ -853,7 +880,7 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
     <button class="hbtn warn" id="verStaleBtn" style="display:none;border-color:var(--amber);color:var(--amber);background:var(--amber-light);"
             onclick="showWorkerStale()">⚠️ الـ Worker نسخة قديمة</button>
     <button class="hbtn" id="aboutBtn" onclick="openAbout()">ℹ️ عن الأداة</button>
-    <button class="hbtn ver-btn" id="verBtn" onclick="openChangelog()">v3.3 📋</button>
+    <button class="hbtn ver-btn" id="verBtn" onclick="openChangelog()">v3.4 📋</button>
     <button class="hbtn" id="settingsBtn" onclick="openSettings()">⚙️ الإعدادات</button>
   </div>
 </div>
@@ -903,7 +930,21 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
 
       <div class="cl-version-block">
         <div class="cl-version-row">
-          <span class="cl-ver-badge" id="clVerBadge">v3.3</span>
+          <span class="cl-ver-badge" id="clVerBadge">v3.4</span>
+          <span class="cl-ver-date">03-09-2026</span>
+        </div>
+        <ul class="cl-items">
+          <li class="cl-item"><span class="cl-tag new">جديد</span><span>الأوردرات <b>المرفوضة</b> بقت بتتسجّل في السجل — صف D1 بنوع <code>rejected</code> فيه رقم الأوردر ورقم التتبع ونوع بوسطة والحالة اللي وقف عندها و<b>السبب</b>، من غير أي كتابة على شوبيفاي. قبل كده الأوردر المرفوض ماكانش بيسيب أي أثر، فسؤال "ليه ده ما اتشحنش؟" ماكانش ليه إجابة بعد ما الشاشة تتقفل</span></li>
+          <li class="cl-item"><span class="cl-tag new">جديد</span><span>نافذة الملخّص بقى فيها صندوق رابع <b>⛔ مرفوض</b> + قايمة بتفاصيل كل أوردر مرفوض (رقم الأوردر · السبب · التتبع · نوع بوسطة · حالة بوسطة)، والعنوان بيتلوّن أصفر لو الدفعة فيها مرفوض</span></li>
+          <li class="cl-item"><span class="cl-tag new">جديد</span><span>فلتر <b>"مرفوض (ما اتكتبش)"</b> في تاب السجل + عمود <b>السبب / ملاحظة</b> في تصدير XLSX</span></li>
+          <li class="cl-item"><span class="cl-tag change">تغيير</span><span>لو كل الأوردرات مرفوضة، الزرار بيتحوّل لـ <b>"⛔ تسجيل المرفوض"</b> — بيسجّل بس ومابيكتبش على شوبيفاي. والرفض بيتسجّل <b>مرة واحدة</b> لكل سبب: إعادة الضغط مابتكرّرش الصف، والسبب لو اتغيّر بيتسجّل من جديد</span></li>
+          <li class="cl-item"><span class="cl-tag fix">إصلاح</span><span>سبب الرفض بيتحسب من حالة شوبيفاي <b>وقت التسجيل</b> مش وقت الاستعلام — والأوردر اللي بقى متوافق في الوقت الفاصل مابيتسجّلش مرفوض، بيتحدّث في الجدول ورسالة بتقول إنه بقى جاهز للشحن</span></li>
+        </ul>
+      </div>
+
+      <div class="cl-version-block">
+        <div class="cl-version-row">
+          <span class="cl-ver-badge">v3.3</span>
           <span class="cl-ver-date">03-09-2026</span>
         </div>
         <ul class="cl-items">
@@ -1060,7 +1101,9 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
               <code>S1 = Delivered</code> و <code>S2 = Ready</code> → يُكتب
               <code>custom.status_2_r_e = "Shipped"</code>.</li>
             <li>أي أوردر في حالة تانية غير كده → يُرفض تحديثه فقط (باقي
-              الأوردرات المحددة تتحدث عادي) مع عرض السبب في الجدول.</li>
+              الأوردرات المحددة تتحدث عادي) مع عرض السبب في الجدول، و<b>يتسجّل
+              في D1 بنوع <code>rejected</code></b> بالسبب — من غير أي كتابة على
+              شوبيفاي (v3.4).</li>
           </ol>
 
           <h4>كيف تعمل — Workflow</h4>
@@ -1075,13 +1118,16 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
               (لو حاجة اتغيّرت، الدفعة بتتوقف والجدول بيتحدّث) + إعادة تحقق تانية
               في الـ Worker وقت الكتابة + كتابة الميتافيلد + Fulfill تلقائي للأوردر
               (لو لسه محتاج) + تسجيل في D1، وفي الآخر نافذة ملخّص.</li>
+            <li>الأوردرات المرفوضة في نفس الدفعة بتتبعت مع الطلب وتتسجّل بنوع
+              <code>rejected</code> (بعد إعادة تحقق وقت التسجيل)، وتفاصيلها
+              بتبان في نافذة الملخّص وفي تاب السجل.</li>
           </ol>
 
           <h4>الـ Endpoints الرئيسية</h4>
           <table>
             <tr><th>action</th><th>الوصف</th></tr>
             <tr><td><code>lookup</code></td><td>بوسطة + فحص شوبيفاي S1/S2 دفعة واحدة</td></tr>
-            <tr><td><code>update</code></td><td>إعادة تحقق + <code>metafieldsSet</code> + <code>fulfillmentCreate</code> (لو فيه OPEN fulfillmentOrders) + D1 log</td></tr>
+            <tr><td><code>update</code></td><td>إعادة تحقق + <code>metafieldsSet</code> + <code>fulfillmentCreate</code> (لو فيه OPEN fulfillmentOrders) + D1 log · وبياخد كمان <code>rejected[]</code> فيسجّلها بنوع <code>rejected</code> من غير كتابة</td></tr>
             <tr><td><code>get_logs</code> / <code>get_logs_count</code> / <code>get_logs_export</code></td><td>سجل التحديثات — فلاتر server-side (<code>employees</code> · <code>types</code> · <code>search</code> · <code>dateFrom</code>/<code>dateTo</code>) + صفحات، والتصدير بيرجّع <code>cap</code>/<code>total</code>/<code>truncated</code></td></tr>
             <tr><td><code>diag</code></td><td>فحص ذاتي بدون كتابة — المتغيرات (اسم وطول فقط) · صلاحيات تطبيق شوبيفاي · بوسطة · D1 · الـ Origin</td></tr>
             <tr><td><code>get_config</code></td><td>بيرجّع <code>WORKER_VERSION</code> — الواجهة بتقارنه بـ <code>MIN_WORKER_VERSION</code></td></tr>
@@ -1093,6 +1139,7 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
             <tr><td><span class="badge badge-green">✓ تم</span></td><td>الميتافيلد اتكتب <b>واتأكد من رد شوبيفاي</b>، والفلفلمنت (لو اتطلب) نجح</td></tr>
             <tr><td><span class="badge badge-amber">⚠ تم جزئيًا</span></td><td>الحالة اتكتبت فعلًا على شوبيفاي لكن الفلفلمنت فشل — <b>مفيش rollback</b>، والسبب معروض تحت البادج</td></tr>
             <tr><td><span class="badge badge-red">✗ فشل</span></td><td>الميتافيلد ما اتكتبش (الحالة اتغيّرت قبل التحديث، أو خطأ من شوبيفاي) — السبب معروض</td></tr>
+            <tr><td><span class="badge badge-purple">⛔ مرفوض</span></td><td>الانتقال مكانش مسموح — <b>مفيش أي كتابة اتحاولت</b>. مش فشل: الصف اتسجّل في السجل بالسبب عشان يبقى ليه أثر</td></tr>
             <tr><td><span class="badge badge-amber">⚠ تعذّر الاستعلام</span></td><td>نداء بوسطة نفسه فشل — <b>مش</b> معناه إن الشحنة غير موجودة</td></tr>
           </table>
         </div>
@@ -1107,7 +1154,9 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
             <li><code>§TOOL-JS::startLookup/startUpdate</code> — بوسطة + شوبيفاي S1/S2 + metafieldsSet</li>
             <li><code>§TOOL-JS::renderQueryErrors</code> — بانر أحمر لأخطاء الاستعلام، منفصل عن نتيجة الصفوف</li>
             <li><code>§TOOL-JS::recheckBeforeUpdate</code> — إعادة الاستعلام الإجبارية قبل الكتابة + بانر "اتغيّر إيه"</li>
-            <li><code>§TOOL-JS::resultModal</code> — نافذة ملخّص ما بعد التحديث (تلات صناديق + الحالة المستهدفة)</li>
+            <li><code>§TOOL-JS::resultModal</code> — نافذة ملخّص ما بعد التحديث (تلات صناديق + الحالة المستهدفة + صندوق المرفوض وتفاصيله)</li>
+            <li><code>§TOOL-JS::pendingRejected</code> — المرفوض اللي لسه ما اتسجلش بالسبب ده (حارس التكرار في السجل)</li>
+            <li><code>§UPDATE::logRejectedItems</code> (Worker) — إعادة تحقق من المرفوض وقت التسجيل + صف D1 بنوع <code>rejected</code></li>
             <li><code>§SHOPIFY::createFulfillment</code> — fulfillmentCreate لكل OPEN fulfillmentOrder بعد نجاح كتابة Shipped (§UPDATE::fulfillAfterWrite)</li>
             <li><code>§LOG-JS</code> — القسم الموحّد: فلاتر multi-select + فترة سريعة + جدول بترتيب أعمدة + صفحات + تصدير</li>
             <li><code>§LOG-JS::logParams</code> — المصدر الوحيد لفلاتر التلات نداءات (get_logs / get_logs_count / get_logs_export)</li>
@@ -1175,7 +1224,7 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
       ⚙️ الإعدادات
     </button>
     <!-- نص فقط بدون onclick — مفيش وصول للـ Changelog قبل الدخول (Standards #15) -->
-    <div class="login-version" id="loginVersionText">v3.3</div>
+    <div class="login-version" id="loginVersionText">v3.4</div>
 
     <div class="login-top">
       <div class="login-icon">📦</div>
@@ -1233,13 +1282,14 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
   </div>
 </div>
 
-<!-- Result Modal — ملخّص ما بعد التحديث (v3.3) -->
+<!-- Result Modal — ملخّص ما بعد التحديث (v3.3) + تفاصيل المرفوض (v3.4) -->
 <div class="res-overlay" id="resultOverlay" onclick="if(event.target===this)closeResultModal()">
   <div class="res-modal" id="resultModal">
     <div class="res-modal-hdr" id="resultModalHdr">✅ تم التحديث بنجاح</div>
     <div class="res-modal-body">
       <div class="res-sub" id="resultModalSub"></div>
       <div class="res-stats" id="resultModalStats"></div>
+      <div class="res-rej"  id="resultModalRejected" style="display:none;"></div>
       <div class="res-note" id="resultModalNote" style="display:none;"></div>
       <div class="res-ftr">
         <button class="btn btn-outline"  onclick="closeResultModal()">📋 تفاصيل الأوردرات</button>
@@ -1561,13 +1611,13 @@ input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-colo
 // ⚠️ مصدر النسخة الوحيد (Standards #15) — زرار الهيدر وبادج الـ Changelog ونص
 // شاشة الدخول كلهم بيتملوا منه عن طريق renderVersionUI(). ممنوع رقم نسخة
 // مكتوب في أي مكان تاني.
-const TOOL_VERSION = '3.3';
+const TOOL_VERSION = '3.4';
 
 // ⚠️ حد أدنى لنسخة الـ Worker — مش تطابق (Standards #29). الصفحة دي بتعتمد على
 // ?action=diag و?action=get_config والفلاتر كقوايم و cap/total/truncated، وكلهم
 // اتضافوا في Worker v3.2.0. التحذير بيولّع بس لو الـ Worker **أقدم** من ده —
 // يعني Promote ناقص أو rollback، مش مجرد اختلاف أرقام (اللي هو وضع طبيعي).
-const MIN_WORKER_VERSION = '3.2.0';
+const MIN_WORKER_VERSION = '3.3.0';   // v3.3.0 = أول Worker بيقبل rejected[] ويسجّله
 
 // ⚠️ الرابطين مش سر (Standards #28) — constants هنا، مش حقول إعدادات ولا
 // localStorage. الحماية في WORKER_SECRET + CORS، مش في إخفاء الرابط.
@@ -2399,6 +2449,12 @@ function refreshRow(old, fresh) {
   row.logged        = old.logged;
   row.logError      = old.logError;
   row.fulfillment   = old.fulfillment;
+  // نفس القاعدة على تسجيل الرفض: ده فعل حصل فعلاً (صف في D1)، مش حالة بتتقرا
+  // من شوبيفاي — فبيتحافظ عليه. ومربوط **بالسبب** اللي اتسجل بيه، فلو السبب
+  // اتغيّر في الاستعلام الجديد، الصف بيرجع مرشّح للتسجيل تاني (واقعة جديدة).
+  row.rejectLoggedReason = old.rejectLoggedReason;
+  row.rejectLogged       = old.rejectLogged;
+  row.rejectLogError     = old.rejectLogError;
   // إلغاء اختيار صريح من الموظف بيتحافظ عليه؛ صف كان مرفوض وبقى متوافق بيتحدّد
   row.selected      = fresh.found && fresh.valid && ((old.found && old.valid) ? !!old.selected : true);
   return row;
@@ -2578,6 +2634,14 @@ function renderQueryErrors(bostaErrors, shopifyError) {
 // الأساسي تم بس فيه حاجة ما اتأكدتش — وممنوع يتحسب نجاح.
 function getShopifyCell(r) {
   const status = r.shopifyStatus;
+  // ⚠️ المرفوض اللي اتسجل لازم يبان إنه اتسجل — من غير كده الموظف مش قادر
+  // يفرّق بين "مرفوض واتوثّق" و"مرفوض وضاع"، والاتنين شكلهم "—".
+  if (!status && r.found && !r.valid && r.rejectLogged !== undefined) {
+    return r.rejectLogged
+      ? `<span class="badge badge-purple">📋 اتسجل كمرفوض</span>`
+      : `<span class="badge badge-amber">⚠ ما اتسجلش</span>`
+        + (r.rejectLogError ? `<div class="reject-reason">${r.rejectLogError}</div>` : '');
+  }
   if (!status) return `<span class="badge badge-neutral">—</span>`;
 
   const badge = status === 'success' ? `<span class="badge badge-green">✓ تم</span>`
@@ -2629,11 +2693,18 @@ function syncSelectAll() {
   document.getElementById('selAllHead').checked = allChk;
 }
 
+// ⚠️ دفعة كلها مرفوضة: الزرار بيفضل شغّال بس **باسم تاني** — بيسجّل الرفض
+// ومابيكتبش على شوبيفاي. زرار اسمه "تحديث شوبيفاي" وهو مش هيحدّث أي حاجة
+// بيخلي الموظف يفتكر إن حصلت كتابة، فالاسم بيتغيّر مع الفعل.
 function updateUpdateBtn() {
   const cnt = resultsData.filter(r => r.found && r.valid && r.selected).length;
+  const rej = pendingRejectedRows().length;
   const btn = document.getElementById('btnUpdate');
-  btn.disabled    = cnt === 0;
-  btn.textContent = cnt > 0 ? `✅ تحديث شوبيفاي (${cnt.toLocaleString('en-US')} أوردر)` : '✅ تحديث شوبيفاي';
+  btn.disabled = cnt === 0 && rej === 0;
+  btn.textContent =
+      cnt > 0 ? `✅ تحديث شوبيفاي (${cnt.toLocaleString('en-US')} أوردر)`
+    : rej > 0 ? `⛔ تسجيل المرفوض (${rej.toLocaleString('en-US')} أوردر)`
+    :           '✅ تحديث شوبيفاي';
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2697,10 +2768,21 @@ function clearRecheckBanner() {
 // §TOOL-JS::startUpdate — metafieldsSet (S1/S2), server re-validates
 // ══════════════════════════════════════════════════════════════
 
+// ─── §TOOL-JS::pendingRejected — المرفوض اللي لسه ما اتسجلش بالسبب ده ───
+// ⚠️ الشرط مش "مرفوض" بس — كمان "ما اتسجلش بالسبب ده قبل كده". الموظف بيضغط
+// "تحديث شوبيفاي" أكتر من مرة على نفس الجدول (بيضيف أرقام جديدة ويكمّل)، ومن
+// غير الشرط ده كل ضغطة كانت هتكتب نفس صف الرفض تاني في سجل دايم.
+// والسبب لو اتغيّر (الحالة اتحرّكت) بيتسجّل تاني — دي واقعة جديدة مش تكرار.
+function pendingRejectedRows() {
+  return resultsData.filter(r =>
+    r.found && !r.valid && (r.rejectLoggedReason !== (r.rejectReason || '')));
+}
+
 async function startUpdate() {
   if (!currentEmployee) { showToast('يرجى تسجيل الدخول أولاً', 'error'); return; }
   let toUpdate = resultsData.filter(r => r.found && r.valid && r.selected);
-  if (!toUpdate.length) return;
+  // دفعة كلها مرفوضة لسه ليها شغل: تتسجّل. الزرار بيسمح بيها (updateUpdateBtn).
+  if (!toUpdate.length && !pendingRejectedRows().length) return;
 
   const btn          = document.getElementById('btnUpdate');
   const progressWrap  = document.getElementById('updateProgress');
@@ -2711,10 +2793,12 @@ async function startUpdate() {
   clearRecheckBanner();
 
   // ─── إعادة الاستعلام أولاً — قبل أي كتابة ───
+  // مفيش صف مختار = مفيش كتابة على شوبيفاي أصلاً، فمفيش حاجة تتأكد قبلها.
+  // (المرفوض بيتأكد منه الـ Worker من نفس fetch الكتابة — §UPDATE::logRejectedItems)
   btn.innerHTML = '<div class="spinner"></div> جاري إعادة الاستعلام...';
-  let blocked;
+  let blocked = [];
   try {
-    blocked = await recheckBeforeUpdate(toUpdate);
+    if (toUpdate.length) blocked = await recheckBeforeUpdate(toUpdate);
   } catch (err) {
     // ما اتأكدناش من الحالة = ما بنكتبش. الشك هنا بيتعرض، مابيتخطّاش.
     renderResults();
@@ -2738,12 +2822,15 @@ async function startUpdate() {
 
   // الصفوف بعد إعادة الاستعلام — نفس المجموعة، بس ببيانات لسه اتقرأت
   toUpdate = resultsData.filter(r => r.found && r.valid && r.selected);
-  if (!toUpdate.length) { btn.disabled = false; updateUpdateBtn(); return; }
+  const toReject = pendingRejectedRows();
+  if (!toUpdate.length && !toReject.length) { btn.disabled = false; updateUpdateBtn(); return; }
 
   btn.innerHTML  = '<div class="spinner"></div> جاري التحديث...';
-  progressWrap.style.display = '';
-  progressTxt.textContent    = `0 / ${toUpdate.length.toLocaleString('en-US')}`;
-  progressBar.style.width    = '0%';
+  if (toUpdate.length) {
+    progressWrap.style.display = '';
+    progressTxt.textContent    = `0 / ${toUpdate.length.toLocaleString('en-US')}`;
+    progressBar.style.width    = '0%';
+  }
 
   const items = toUpdate.map(r => ({
     orderName:      r.businessRef,
@@ -2751,10 +2838,22 @@ async function startUpdate() {
     orderType:      r.orderType || '',
   }));
 
+  // المرفوض بيتبعت جنب المختار — من غير كتابة، عشان يتسجّل في D1 بـ
+  // type='rejected'. السبب بيتحسب في الـ Worker من حالة شوبيفاي وقت الكتابة،
+  // واللي بيتبعت هنا سياق بس (بوسطة) — مش مصدر الحكم.
+  const rejectedPayload = toReject.map(r => ({
+    orderName:      r.businessRef,
+    trackingNumber: r.trackingNumber,
+    orderType:      r.orderType || '',
+    bostaState:     r.state || null,
+    reason:         r.rejectReason || '',
+  }));
+
   try {
     const data = await apiPost('update', {
       employee: currentEmployee.username,
       items,
+      rejected: rejectedPayload,
     });
 
     const resultMap = {};
@@ -2779,30 +2878,79 @@ async function startUpdate() {
         const cell = document.getElementById(`shopify-${resultsData.indexOf(r)}`);
         if (cell) cell.innerHTML = getShopifyCell(r);
         done++;
-        progressTxt.textContent = `${done.toLocaleString('en-US')} / ${items.length.toLocaleString('en-US')}`;
-        progressBar.style.width = `${Math.round(done / items.length * 100)}%`;
+        if (items.length) {
+          progressTxt.textContent = `${done.toLocaleString('en-US')} / ${items.length.toLocaleString('en-US')}`;
+          progressBar.style.width = `${Math.round(done / items.length * 100)}%`;
+        }
       }
     }
+
+    // ─── صفوف المرفوض بعد التسجيل ───
+    // الـ Worker أعاد التحقق وقت الكتابة، فردّه هو **آخر استعلام فعلي** للصفوف
+    // دي — الجدول بياخد منه s1/s2/السبب، والصف اللي بقى متوافق بيرجع قابل
+    // للاختيار بدل ما يفضل أحمر بسبب اتقرا من دقايق.
+    const rejectedRows = [];
+    for (const rr of (data.rejected || [])) {
+      const key = String(rr.orderName || '').replace(/^#/, '');
+      const row = resultsData.find(r => String(r.businessRef || '').replace(/^#/, '') === key);
+
+      if (rr.becameValid) {
+        if (row) {
+          row.s1 = rr.s1; row.s2 = rr.s2;
+          row.valid = true; row.machine = rr.machine; row.rejectReason = null;
+          row.selected = false;            // ما اتشحنش — الموظف هو اللي يختار
+          row.rejectLoggedReason = undefined;
+        }
+        continue;
+      }
+
+      if (row) {
+        row.s1 = rr.s1 ?? row.s1; row.s2 = rr.s2 ?? row.s2;
+        row.rejectReason = rr.reason || row.rejectReason;
+        // ⚠️ العلامة بتتحط **بس** لو التسجيل تم فعلاً — صف ما اتسجلش لازم
+        // يفضل مرشّح للتسجيل في الضغطة الجاية، مش يتعلّم إنه خلص.
+        if (rr.logged) row.rejectLoggedReason = row.rejectReason || '';
+        row.rejectLogged      = rr.logged === true;
+        row.rejectLogError    = rr.logError || null;
+      }
+
+      rejectedRows.push({
+        orderName:      rr.orderName || (row ? row.businessRef : ''),
+        reason:         rr.reason || (row ? row.rejectReason : ''),
+        machine:        rr.machine,
+        trackingNumber: rr.trackingNumber || (row ? row.trackingNumber : ''),
+        orderType:      rr.orderType || (row ? row.orderType : ''),
+        bostaState:     row ? row.state : null,
+        logged:         rr.logged,
+        logError:       rr.logError || null,
+      });
+    }
+    if (data.rejected?.length) renderResults();
 
     // الملخّص فيه عدّاد للأصفر كمان، والأصفر بيشغّل playBeep('warn')
     const succeeded = data.summary?.succeeded || 0;
     const warned    = data.summary?.warned    || 0;
     const failed    = data.summary?.failed    || 0;
     const notLogged = (data.results || []).filter(r => r.logged === false).length;
+    const rejected  = rejectedRows.length;
+    const rejectedNotLogged = rejectedRows.filter(r => r.logged === false).length;
+    const becameValid       = (data.rejected || []).filter(r => r.becameValid).length;
 
     showToast(
       `تم: ${succeeded.toLocaleString('en-US')} ✓`
         + (warned ? ` | تحذير: ${warned} ⚠` : '')
         + (failed ? ` | فشل: ${failed} ✗` : '')
-        + (notLogged ? ` | ما اتسجلش: ${notLogged}` : ''),
-      failed ? 'error' : (warned ? 'error' : 'success'),
-      (warned || failed) ? 7000 : 3000
+        + (rejected ? ` | مرفوض: ${rejected} ⛔` : '')
+        + (notLogged + rejectedNotLogged ? ` | ما اتسجلش: ${notLogged + rejectedNotLogged}` : ''),
+      (failed || warned || rejected) ? 'error' : 'success',
+      (warned || failed || rejected) ? 7000 : 3000
     );
-    if (warned) playBeep('warn');
+    if (warned || rejected) playBeep('warn');
 
     showUpdateResultModal({
-      total: data.summary?.total ?? items.length,
+      total: (data.summary?.total ?? items.length) + rejected,
       succeeded, warned, failed, notLogged,
+      rejectedRows, becameValid, rejectedNotLogged,
     });
   } catch (err) {
     showToast(`خطأ: ${err.message}`, 'error');
@@ -2819,14 +2967,23 @@ async function startUpdate() {
 // ⚠️ نفس قاعدة عمود النتيجة: تلات حالات مش اتنين. الأصفر (تم جزئيًا) ليه
 // صندوقه وعنوانه، وممنوع يتلمّ على النجاح — النافذة دي أكتر حاجة الموظف
 // بيشوفها، فلو قالت "تم بنجاح" على دفعة فيها تحذير، التحذير ده مات.
-function showUpdateResultModal({ total, succeeded, warned, failed, notLogged }) {
-  const modal = document.getElementById('resultModal');
-  const hdr   = document.getElementById('resultModalHdr');
+// ⚠️ والمرفوض ليه صندوقه هو كمان (v3.4). "تم التحديث بنجاح" على دفعة فيها
+// أوردر اترفض = نص الحقيقة: الكتابة اللي حصلت نجحت فعلاً، بس فيه أوردر خرج من
+// الدفعة من غير ما يتشحن. العنوان بيتلوّن للمرفوض برضه، والتفاصيل (رقم الأوردر
+// + السبب) بتتعرض جوّه النافذة — الرقم لوحده مابيجاوبش "ليه".
+function showUpdateResultModal({ total, succeeded, warned, failed, notLogged,
+                                 rejectedRows = [], becameValid = 0, rejectedNotLogged = 0 }) {
+  const modal    = document.getElementById('resultModal');
+  const hdr      = document.getElementById('resultModalHdr');
+  const rejected = rejectedRows.length;
 
   modal.classList.remove('warn', 'fail');
-  if (failed)      { modal.classList.add('fail'); hdr.textContent = '❌ التحديث خلص وفيه فشل'; }
-  else if (warned) { modal.classList.add('warn'); hdr.textContent = '⚠️ تم التحديث — فيه محتاج مراجعة'; }
-  else             {                              hdr.textContent = '✅ تم التحديث بنجاح'; }
+  if (failed)        { modal.classList.add('fail'); hdr.textContent = '❌ التحديث خلص وفيه فشل'; }
+  else if (warned)   { modal.classList.add('warn'); hdr.textContent = '⚠️ تم التحديث — فيه محتاج مراجعة'; }
+  else if (!succeeded && rejected)
+                     { modal.classList.add('warn'); hdr.textContent = '⛔ ما اتكتبش أي حاجة — كل الأوردرات مرفوضة'; }
+  else if (rejected) { modal.classList.add('warn'); hdr.textContent = '✅ تم التحديث — وفيه أوردرات مرفوضة'; }
+  else               {                              hdr.textContent = '✅ تم التحديث بنجاح'; }
 
   document.getElementById('resultModalSub').innerHTML =
       `<span>الحالة المستهدفة: <b>✅ Shipped</b></span>`
@@ -2838,19 +2995,59 @@ function showUpdateResultModal({ total, succeeded, warned, failed, notLogged }) 
     + `<div class="res-stat-val">${Number(val).toLocaleString('en-US')}</div>`
     + `<div class="res-stat-lbl">${lbl}</div></div>`;
 
-  document.getElementById('resultModalStats').innerHTML =
+  const stats = document.getElementById('resultModalStats');
+  stats.classList.toggle('four', rejected > 0);
+  stats.innerHTML =
       box('ok',   succeeded, '✓ ناجح')
     + box('warn', warned,    '⚠ محتاج مراجعة')
-    + box('fail', failed,    '✗ فشل');
+    + box('fail', failed,    '✗ فشل')
+    + (rejected ? box('rej', rejected, '⛔ مرفوض') : '');
+
+  // ── تفاصيل المرفوض ──
+  const rejBox = document.getElementById('resultModalRejected');
+  if (rejected) {
+    rejBox.innerHTML =
+        `<div class="res-rej-hdr">⛔ مرفوض — ما اتكتبش عليه أي حاجة على شوبيفاي `
+      + `(${rejected.toLocaleString('en-US')})</div>`
+      + `<div class="res-rej-list">`
+      + rejectedRows.map(r => {
+          const machine = r.machine === 'S2' ? '[S-2]' : (r.machine || '—');
+          const meta = [
+            r.trackingNumber ? `تتبع: <span class="col-num">${r.trackingNumber}</span>` : '',
+            r.orderType      ? `نوع بوسطة: ${r.orderType}` : '',
+            r.bostaState     ? `حالة بوسطة: ${r.bostaState}` : '',
+            `الماكينة: ${machine}`,
+          ].filter(Boolean).join(' · ');
+          return `<div class="res-rej-item">`
+            + `<div class="res-rej-top">`
+              + `<span>${r.orderName || '—'}</span>`
+              + (r.logged === false
+                  ? `<span class="badge badge-amber" title="${r.logError || ''}">⚠ ما اتسجلش</span>`
+                  : `<span class="badge badge-neutral">📋 اتسجل في السجل</span>`)
+            + `</div>`
+            + `<div class="res-rej-why">✗ ${r.reason || 'مرفوض'}</div>`
+            + `<div class="res-rej-meta">${meta}</div>`
+          + `</div>`;
+        }).join('')
+      + `</div>`;
+    rejBox.style.display = '';
+  } else {
+    rejBox.style.display = 'none'; rejBox.innerHTML = '';
+  }
 
   // "تمّت وما اتسجلتش" لازم تبان في الملخّص كمان — مش في الجدول بس
-  const note = document.getElementById('resultModalNote');
-  if (notLogged) {
-    note.textContent = `⚠️ ${Number(notLogged).toLocaleString('en-US')} عملية تمّت على شوبيفاي لكن ما اتسجلتش في السجل`;
-    note.style.display = '';
-  } else {
-    note.style.display = 'none';
-  }
+  const note  = document.getElementById('resultModalNote');
+  const lines = [];
+  if (notLogged)
+    lines.push(`⚠️ ${Number(notLogged).toLocaleString('en-US')} عملية تمّت على شوبيفاي لكن ما اتسجلتش في السجل`);
+  if (rejectedNotLogged)
+    lines.push(`⚠️ ${Number(rejectedNotLogged).toLocaleString('en-US')} أوردر مرفوض ما اتسجلش في السجل`);
+  // بقى متوافق بين الاستعلام والكتابة — ما اتسجلش مرفوض (صح) وما اتكتبش (صح)،
+  // فلازم الموظف يعرف إنه لسه مستنّي، وإلا يعدّي بصمت.
+  if (becameValid)
+    lines.push(`ℹ️ ${Number(becameValid).toLocaleString('en-US')} أوردر بقى متوافق دلوقتي — استعلم تاني عشان تشحنه`);
+  if (lines.length) { note.innerHTML = lines.join('<br>'); note.style.display = ''; }
+  else              { note.style.display = 'none'; }
 
   document.getElementById('resultOverlay').classList.add('open');
 }
@@ -2890,8 +3087,9 @@ let logRows        = [];      // صفوف الصفحة الحالية بعد ا�
 // ─── §LOG-JS::filters — multi-select state (بند ٢١: كل الفلاتر multi-select) ───
 const msState = {
   type: { items: [
-            { value: 'update', label: 'تحديث حالة' },
-            { value: 'tagged', label: 'تاج (سجل قديم)' },
+            { value: 'update',   label: 'تحديث حالة' },
+            { value: 'rejected', label: 'مرفوض (ما اتكتبش)' },
+            { value: 'tagged',   label: 'تاج (سجل قديم)' },
           ], selected: new Set(), search: '' },
   emp:  { items: [], selected: new Set(), search: '' },
 };
@@ -3361,6 +3559,10 @@ function normalizeLogRows(entries) {
       raw:        e,
       extra,
       isLegacy:   e.type === 'tagged',
+      // ⚠️ صف رفض = أوردر اتسكن وما اتشحنش. مفيش كتابة حصلت، فالنتيجة عنده
+      // مش success/warning/error — نوع رابع ليه بادج وسبب خاص بيه.
+      isRejected: e.type === 'rejected',
+      reason:     extra.reason || '',
       date:       d, time: d,          // نفس الـ timestamp — عمودان مستقلان في الترتيب
       employee:   employeeDisplayName(e.employee),
       orderName:  e.order_name || '',
@@ -3376,9 +3578,11 @@ function normalizeLogRows(entries) {
 }
 
 function resultBadge(result) {
-  if (result === 'success') return '<span class="badge badge-green">✓ تم</span>';
-  if (result === 'warning') return '<span class="badge badge-amber">⚠ تم جزئيًا</span>';
-  if (result === 'error')   return '<span class="badge badge-red">✗ فشل</span>';
+  if (result === 'success')  return '<span class="badge badge-green">✓ تم</span>';
+  if (result === 'warning')  return '<span class="badge badge-amber">⚠ تم جزئيًا</span>';
+  if (result === 'error')    return '<span class="badge badge-red">✗ فشل</span>';
+  // ⛔ مرفوض ≠ ✗ فشل: مفيش كتابة اتحاولت وفشلت — كان ممنوع أصلاً يتكتب.
+  if (result === 'rejected') return '<span class="badge badge-purple" title="الانتقال مكانش مسموح — ما اتكتبش أي حاجة على شوبيفاي">⛔ مرفوض</span>';
   return '<span class="badge badge-neutral" title="سجل قديم قبل تسجيل النتيجة — النتيجة غير معروفة">—</span>';
 }
 
@@ -3400,12 +3604,21 @@ function renderLogTable(rows) {
 
     // ⚠️ LTR صريح: "Ready → Shipped" جوّه خلية RTL بيتقلب ترتيبها بالـ bidi
     // فيبان وكأن الاتجاه معكوس. الاتجاه هنا جزء من المعنى، مش تنسيق.
-    const transition = (r.raw.value_before || r.raw.value_after)
-      ? `<span class="col-num">${r.raw.value_before || '—'} → ${r.raw.value_after || '—'}</span>`
-      : (r.raw.notes || r.extra.tag || '—');
+    // ⚠️ صف الرفض مالوش "إلى" — العمود بتاعه بيقول الحالة اللي وقف عندها
+    // صراحةً. لو اتعرض `Ready → —` كان هيتقرا "اتكتب فاضي".
+    const transition = r.isRejected
+      ? `<span class="col-num">${r.raw.value_before || '—'}</span>`
+        + `<span style="color:var(--purple);font-weight:700;"> · ما اتكتبش</span>`
+      : (r.raw.value_before || r.raw.value_after)
+        ? `<span class="col-num">${r.raw.value_before || '—'} → ${r.raw.value_after || '—'}</span>`
+        : (r.raw.notes || r.extra.tag || '—');
 
     const fulfillWarn = r.extra.fulfillment?.error
       ? `<div style="font-size:10.5px;color:var(--amber);">فلفلمنت: ${r.extra.fulfillment.error}</div>` : '';
+
+    // السبب هو كل قيمة صف الرفض — من غيره الصف بيقول "حصل رفض" وبس
+    const rejectWhy = r.isRejected && r.reason
+      ? `<div style="font-size:10.5px;color:var(--red-dark);line-height:1.5;">${r.reason}</div>` : '';
 
     return `<tr>
       <td class="col-num">${r.date ? formatDate(r.raw.timestamp) : '—'}</td>
@@ -3414,7 +3627,7 @@ function renderLogTable(rows) {
       <td>${r.orderName ? orderLink(r.orderName, r.orderId) : '—'}</td>
       <td>${machineBadge}</td>
       <td style="font-size:12px;">${transition}</td>
-      <td>${resultBadge(r.result)}${fulfillWarn}</td>
+      <td>${resultBadge(r.result)}${fulfillWarn}${rejectWhy}</td>
       <td class="col-num">${r.tn || '—'}</td>
       <td>${r.orderType || '—'}</td>
     </tr>`;
@@ -3447,9 +3660,12 @@ async function exportLogXLSX() {
       { header: 'النتيجة',     key: 'result',    width: 14 },
       { header: 'رقم التتبع',  key: 'tn',        width: 16 },
       { header: 'نوع بوسطة',   key: 'orderType', width: 14 },
+      // ⚠️ عمود السبب مش زينة: صف الرفض كل قيمته فيه — من غيره التصدير
+      // بيطلع صفوف "مرفوض" من غير أي سبب، وهي أكتر صفوف بيتسأل عنها.
+      { header: 'السبب / ملاحظة', key: 'reason', width: 42 },
     ];
 
-    const RESULT_LABELS = { success: 'تم', warning: 'تم جزئيًا', error: 'فشل' };
+    const RESULT_LABELS = { success: 'تم', warning: 'تم جزئيًا', error: 'فشل', rejected: 'مرفوض' };
 
     normalizeLogRows(entries).forEach(r => {
       ws.addRow({
@@ -3461,10 +3677,11 @@ async function exportLogXLSX() {
         orderName: r.orderName || '—',
         machine:   r.machine   || '—',
         before:    r.raw.value_before || '—',
-        after:     r.raw.value_after  || r.extra.tag || '—',
+        after:     r.isRejected ? '—' : (r.raw.value_after || r.extra.tag || '—'),
         result:    RESULT_LABELS[r.result] || '—',
         tn:        r.tn        || '—',
         orderType: r.orderType || '—',
+        reason:    r.reason || r.raw.notes || '—',
       });
     });
 
