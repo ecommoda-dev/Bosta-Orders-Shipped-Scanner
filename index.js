@@ -48,8 +48,8 @@
 //   ?action=diag             GET  — فحص ذاتي بدون أي كتابة (أسماء وأطوال المتغيرات — مفيش قيم أسرار)
 //   ?action=get_config       GET  — WORKER_VERSION عشان الواجهة تكشف Promote ناقص
 //
-// skills: constants v1.4.3 · worker-builder v2.0.0 · order-lifecycle v1.0.0 ·
-//         bosta-api-helper v1.0.0 · shopify-graphql-helper v1.0.0 — 03-09-2026
+// skills: worker-builder v2.0.0 · constants v1.4.3 · order-lifecycle v1.2.0 ·
+//         shopify-graphql-helper v1.0.0 · bosta-api-helper (بلا إصدار) — 03-09-2026
 
 // ══════════════════════════════════════════════════════════════
 // §CONSTANTS
