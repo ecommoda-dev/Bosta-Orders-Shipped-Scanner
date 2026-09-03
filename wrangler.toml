@@ -1,0 +1,28 @@
+# الشكل المعتمد لأدوات EcomModa
+# ⚠️ name لازم يطابق اسم الـ Worker في داشبورد Cloudflare حرف بحرف.
+#    لو اختلفوا، الـ build مش بيفشل — بينشر Worker جديد والأصلي بيتجمّد بصمت.
+
+name               = "bosta-orders-shipped-scanner"
+main               = "index.js"
+compatibility_date = "2025-01-01"
+workers_dev        = true
+
+[observability]
+enabled = true
+
+# ─── D1 ──────────────────────────────────────────────
+# الـ binding دايمًا "DB" — أي اسم تاني والكتابة بتفشل بصمت
+[[d1_databases]]
+binding       = "DB"
+database_name = "ecommoda-dev-logs"
+database_id   = "90db62d3-bd7e-4d92-912b-10fc78eeb565"
+
+# ─── Vars (نص عادي — مش أسرار) ────────────────────────
+# دي بتتطبّق فعليًا مع Workers Builds (اتأكدنا 22-08-2026).
+[vars]
+SHOP_DOMAIN = "6c7e1a-53.myshopify.com"
+
+# ⚠️ الأسرار مبتتكتبش هنا أبدًا.
+#    Worker → Settings → Variables and Secrets → علّم Secret
+#    وبعدها: Deployments → Version History → ⋯ → Promote version
+#    الأسرار المطلوبة لهذه الأداة: WORKER_SECRET · CLIENT_ID · CLIENT_SECRET · BOSTA_API_KEY
