@@ -2,6 +2,7 @@
 # ⚠️ name لازم يطابق اسم الـ Worker في داشبورد Cloudflare حرف بحرف.
 #    لو اختلفوا، الـ build مش بيفشل — بينشر Worker جديد والأصلي بيتجمّد بصمت.
 
+
 name               = "bosta-orders-shipped-scanner"
 main               = "index.js"
 compatibility_date = "2025-01-01"
