@@ -89,8 +89,8 @@ SELECT COUNT(*) as total, MAX(timestamp) as last_ts FROM logs WHERE tool = 'meta
 > ده بديل الـ tags — دفع الـ tags ممنوع من جلسات Claude Code السحابية.
 
 ```
-النسخ المرقّمة القديمة (1.1.html · 3.0.html · 3.0.1.html · 3.0.3.html · 3.1.html) محفوظة في commit: <يُستكمل بعد الكوميت>
-git show <sha>:1.1.html
+النسخ المرقّمة القديمة (1.1.html · 3.0.html · 3.0.1.html · 3.0.3.html · 3.1.html) محفوظة في commit: 3a2c551
+git show 3a2c551^:1.1.html
 ```
 
 ## بصمة المهارات
