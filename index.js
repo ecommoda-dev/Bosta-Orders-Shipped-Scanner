@@ -13,6 +13,23 @@
 //   النتيجة + في extra.fulfillment بالـ D1 log، مش كفشل كامل للصف.
 //   لو مفيش fulfillmentOrders بحالة OPEN (الأوردر متعمله fulfill من قبل —
 //   مثلاً إعادة شحن) بيتم تجاهل الخطوة دي بصمت وتكمل كتابة الميتافيلد عادي.
+// v3.2.1 — CORS اتحوّل من Option A (wildcard) لـ Option B (ALLOWED_ORIGINS)
+//   على حساب EcomModa على GitHub Pages بس — قرار أحمد 03-09-2026، عشان الأداة
+//   بقت بتكتب على شوبيفاي زي باقي أدوات الكتابة. ومعاه: الافتراضي في json()
+//   بقى أول أصل مسموح بدل '*' (نداء ناسي الـ request كان هيسيب رسالة الخطأ
+//   مقروءة من أي أصل)، وكل نداءات json في lookup/update بتمرر request.
+// v3.2.0 — تطبيق عقد النداءات الخارجية (worker-builder Step 5A) بالكامل:
+//   ① shopifyGQL بقت النسخة الكاملة (فحص resp.ok · رد مش JSON · data.errors ·
+//      data فاضية + retry على THROTTLED) بدل `return resp.json()` — اللي كان
+//      بيحوّل أي 401/429/5xx لـ "الأوردر غير موجود على شوبيفاي" كذّابة.
+//   ② نداءات بوسطة بترمي بدل `if (!res.ok) continue` و`catch (_) {}` —
+//      والفشل بيرجع في `bostaErrors` بدل ما يتحوّل لـ "الشحنة غير موجودة".
+//   ③ نتيجة كل صف تلات حالات: success / warning / error (+ extra.result).
+//   ④ فشل writeLog بيرجع `logged:false` مش بيرمي 500 على عملية تمّت فعلاً.
+//   ⑤ actions بتتملي أول بأول — مش بترجع من الدالة في الآخر.
+//   ⑥ assertEnv + ?action=diag + ?action=get_config.
+//   ⑦ فلاتر السجل بقت قوايم (employees/types) + dateFrom/dateTo عبر
+//      buildLogFilterSQL، و get_logs_export بيرجّع cap/total/truncated.
 // v3.0.3 — إصلاح mutation: Metafield.owner بدل ownerId غير الموجود
 // v3.0.2 — إظهار أخطاء GraphQL الحقيقية + ضم السجل القديم (tagged) لتاب السجل
 // v3.0.1 — إصلاح مطابقة businessReference (راجع §HELPERS::cleanOrderName)
@@ -30,15 +47,19 @@
 //   ?action=lookup           POST  — Bosta search + Shopify S1/S2 batch check + transition validation
 //   ?action=update           POST  — إعادة تحقق من الحالة وقت الكتابة + metafieldsSet
 //                                    + fulfillmentCreate (لو فيه OPEN fulfillmentOrders) + D1 log
-//   ?action=get_logs         GET  — server-side search + pagination (metafields_change فقط لهذه الأداة)
-//   ?action=get_logs_count   GET  — total count matching filters
-//   ?action=get_logs_export  GET  — full export, limit 2000, no pagination
+//   ?action=get_logs         GET  — server-side filters (employees/types/search/dateFrom/dateTo) + pagination
+//   ?action=get_logs_count   GET  — total count matching the same filters
+//   ?action=get_logs_export  GET  — full export up to LOG_EXPORT_MAX + { cap, total, truncated }
+//   ?action=diag             GET  — فحص ذاتي بدون أي كتابة (أسماء وأطوال المتغيرات — مفيش قيم أسرار)
+//   ?action=get_config       GET  — WORKER_VERSION عشان الواجهة تكشف Promote ناقص
 //
-// skills: constants v1.4.3 — 03-09-2026
+// skills: worker-builder v2.0.0 · constants v1.4.3 · order-lifecycle v1.2.0 ·
+//         shopify-graphql-helper v1.0.0 · bosta-api-helper (بلا إصدار) — 03-09-2026
 
 // ══════════════════════════════════════════════════════════════
 // §CONSTANTS
 // ══════════════════════════════════════════════════════════════
+const WORKER_VERSION = '3.2.1';                             // ?action=get_config — الواجهة بتقارنه بـ MIN_WORKER_VERSION
 const TOOL_NAME      = 'bosta_tracker';                    // login/logout D1 logging only
 const SOURCE_TOOL     = 'bosta_orders_shipped_scanner';     // tag used in extra.sourceTool for status-write logs
 const SOURCE_TOOL_LIKE = `%"sourceTool":"${SOURCE_TOOL}"%`;
@@ -69,21 +90,34 @@ const S2_STATUS = {
   RETURNED:           'Returned',
 };
 
-// ── CORS (Option A — Wildcard: Bosta/read tool) ───────────────────────────────
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  'Content-Type': 'application/json',
-};
-function getCORS(_req) { return CORS_HEADERS; }
+// ── CORS (Option B — ALLOWED_ORIGINS) ─────────────────────────────────────────
+// الأداة دي بتكتب على شوبيفاي (ميتافيلد + فلفلمنت) — فبتاخد القائمة الصارمة زي
+// باقي أدوات الكتابة، مش الـ wildcard. قرار أحمد 03-09-2026: حساب EcomModa على
+// GitHub Pages بس.
+const ALLOWED_ORIGINS = [
+  'https://ecommoda-dev.github.io',
+];
+function getCORS(request) {
+  const origin  = request?.headers?.get('Origin') || '';
+  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin':  allowed,
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Vary': 'Origin',
+  };
+}
 
 // ══════════════════════════════════════════════════════════════
 // §HELPERS
 // ══════════════════════════════════════════════════════════════
+// ⚠️ الافتراضي بقى **أول أصل مسموح** مش '*'. مع Option B، نداء json() ناسي
+// الـ request كان هيرجّع رد بـ '*' وسط ردود مقيّدة — يعني الردود اللي فيها رسائل
+// الخطأ (وهي أكتر حاجة بتتسرّب) تفضل مقروءة من أي أصل. الثغرة بتتفتح بالنسيان،
+// مش بقرار، فالافتراضي نفسه اتقفل.
 function json(data, status = 200, request = null) {
   const headers = { 'Content-Type': 'application/json' };
-  Object.assign(headers, request ? getCORS(request) : { 'Access-Control-Allow-Origin': '*' });
+  Object.assign(headers, getCORS(request));
   return new Response(JSON.stringify(data), { status, headers });
 }
 
@@ -169,29 +203,66 @@ async function writeLog(db, entry) {
   ).run();
 }
 
-async function getLogs(db, {
-  tool     = null,
-  employee = null,
-  type     = null,
-  search   = null,
-  limit    = 200,
-  offset   = 0,
+const LOG_EXPORT_MAX = 2000;   // سقف التصدير — بيرجع للواجهة كـ `cap`
+
+/**
+ * بنّاء شرط الفلترة الموحّد للسجل — التلات دوال تحته بتستخدمه، فمفيش SQL
+ * مكرر يتعتّق في واحدة منهم ويسيب التانية.
+ *
+ * ⚠️ dateFrom/dateTo بيتقارنوا بـ substr(timestamp,1,10) — يعني **UTC**،
+ * والعرض بتوقيت القاهرة (UTC+3). فرق التلات ساعات ممكن يحط عملية بعد ٩ مساءً
+ * بتوقيت القاهرة في يوم UTC اللي بعده. مقبول لفلتر بالأيام — بس مكتوب.
+ * login/logout مستثنيين في SQL دايمًا — مش client-side.
+ */
+function buildLogFilterSQL(select, {
+  tool      = null,
+  employee  = null, employees = null,
+  type      = null, types     = null,
+  search    = null,
+  dateFrom  = null, dateTo    = null,
 } = {}) {
-  let sql = 'SELECT * FROM logs WHERE 1=1';
+  let sql = `${select} FROM logs WHERE type NOT IN ('login','logout')`;
   const b = [];
 
-  if (tool)     { sql += ' AND tool = ?';     b.push(tool); }
-  if (employee) { sql += ' AND employee = ?'; b.push(employee); }
-  if (type)     { sql += ' AND type = ?';     b.push(type); }
-  if (search) {
-    sql += ' AND (sku LIKE ? OR product_title LIKE ? OR order_name LIKE ? OR notes LIKE ?)';
-    b.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+  const emps = Array.isArray(employees) && employees.length ? employees : (employee ? [employee] : []);
+  const typs = Array.isArray(types)     && types.length     ? types     : (type     ? [type]     : []);
+
+  if (tool) { sql += ' AND tool = ?'; b.push(tool); }
+  if (emps.length) {
+    sql += ` AND employee IN (${emps.map(() => '?').join(',')})`; b.push(...emps);
   }
+  if (typs.length) {
+    sql += ` AND type IN (${typs.map(() => '?').join(',')})`; b.push(...typs);
+  }
+  if (search) {
+    sql += ' AND (order_name LIKE ? OR notes LIKE ?)';
+    b.push(`%${search}%`, `%${search}%`);
+  }
+  if (dateFrom) { sql += ' AND substr(timestamp, 1, 10) >= ?'; b.push(dateFrom); }
+  if (dateTo)   { sql += ' AND substr(timestamp, 1, 10) <= ?'; b.push(dateTo); }
 
-  sql += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
-  b.push(Math.min(limit, 500), offset);
+  return { sql, b };
+}
 
-  return (await db.prepare(sql).bind(...b).all()).results;
+/**
+ * بيقرا فلاتر السجل من الـ query string — CSV للقوايم
+ * (employees=ahmed,sara · types=update,tagged).
+ * الاسم المفرد لسه مقبول للتوافق الرجعي.
+ */
+function logParamsFrom(url, tool) {
+  const csv = (k) => (url.searchParams.get(k) || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const employees = csv('employees'), types = csv('types');
+  return {
+    tool,
+    employees: employees.length ? employees : null,
+    employee:  url.searchParams.get('employee') || null,
+    types:     types.length ? types : null,
+    type:      url.searchParams.get('type')     || null,
+    search:    url.searchParams.get('search')   || null,
+    dateFrom:  url.searchParams.get('dateFrom') || null,
+    dateTo:    url.searchParams.get('dateTo')   || null,
+  };
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -210,33 +281,35 @@ const LOG_SCOPE_SQL = `(
   OR (tool = 'bosta_tracker'     AND type = 'tagged')
 )`;
 
-async function getLogsCount(db, { employee = null, search = null } = {}) {
-  let sql = `SELECT COUNT(*) as total FROM logs WHERE ${LOG_SCOPE_SQL}`;
-  const b = [SOURCE_TOOL_LIKE];
+// §SHARED مكتوب فوقه "copy verbatim" — فالنطاق الخاص بالأداة دي بيتضاف من بره
+// عن طريق الغلاف ده بدل ما نعدّل buildLogFilterSQL. كل شروط buildLogFilterSQL
+// متضامّة بـ AND، فإضافة الشرط في الآخر آمنة.
+// ⚠️ ما بنمرّرش `tool` للبنّاء — النطاق هنا بيغطي اداتين (metafields_change
+// الحالية + bosta_tracker/tagged القديمة) والبنّاء بيقبل قيمة واحدة بس.
+function buildScopedLogSQL(select, filters = {}) {
+  const { sql, b } = buildLogFilterSQL(select, { ...filters, tool: null });
+  return { sql: `${sql} AND ${LOG_SCOPE_SQL}`, b: [...b, SOURCE_TOOL_LIKE] };
+}
 
-  if (employee) { sql += ' AND employee = ?'; b.push(employee); }
-  if (search) {
-    sql += ' AND (order_name LIKE ? OR notes LIKE ?)';
-    b.push(`%${search}%`, `%${search}%`);
-  }
+async function getScopedLogs(db, { limit = 100, offset = 0, ...filters } = {}) {
+  const { sql, b } = buildScopedLogSQL('SELECT *', filters);
+  const q = sql + ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+  return (await db.prepare(q)
+    .bind(...b, Math.min(limit, 100), Math.max(offset, 0)).all()).results;
+}
 
+async function getLogsCount(db, filters = {}) {
+  const { sql, b } = buildScopedLogSQL('SELECT COUNT(*) as total', filters);
   const row = await db.prepare(sql).bind(...b).first();
   return row?.total ?? 0;
 }
 
-async function getLogsExport(db, { employee = null, search = null } = {}) {
-  let sql = `SELECT * FROM logs WHERE ${LOG_SCOPE_SQL}`;
-  const b = [SOURCE_TOOL_LIKE];
-
-  if (employee) { sql += ' AND employee = ?'; b.push(employee); }
-  if (search) {
-    sql += ' AND (order_name LIKE ? OR notes LIKE ?)';
-    b.push(`%${search}%`, `%${search}%`);
-  }
-
-  sql += ' ORDER BY timestamp DESC LIMIT 2000';
-
-  return (await db.prepare(sql).bind(...b).all()).results;
+// ⚠️ بتقص عند LOG_EXPORT_MAX في السكوت — فالـ endpoint إلزامي يرجّع
+// cap/total/truncated معاها، وإلا التصدير المقصوص بيوصل بعلامة ✓ خضرا.
+async function getLogsExport(db, filters = {}) {
+  const { sql, b } = buildScopedLogSQL('SELECT *', filters);
+  const q = sql + ' ORDER BY timestamp DESC LIMIT ?';
+  return (await db.prepare(q).bind(...b, LOG_EXPORT_MAX).all()).results;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -269,12 +342,71 @@ const STATE_MAP = {
   105: 'On hold',
 };
 
+// ─── §BOSTA::bostaSearch ───
+// ⚠️ Step 5A ⑥: `if (!res.ok) continue;` و`catch (_) {}` ممنوعين هنا. الاتنين
+// بيحوّلوا "مفتاح غلط / بوسطة واقعة" لـ **"الشحنة غير موجودة"** — رسالة كاذبة
+// بتخلي الموظف يفتكر إن الشحنة مش موجودة أصلاً ويسيبها. الفشل بيترمي، والنداء
+// بيرجع بعلامة واضحة والأرقام المتأثرة بتترسم "تعذّر الاستعلام" مش "غير موجود".
+async function bostaSearch(env, trackingNumbers) {
+  let res, text;
+  try {
+    res = await fetch(`${BOSTA_API_BASE}/deliveries/search`, {
+      method:  'POST',
+      headers: { Authorization: env.BOSTA_API_KEY, 'Content-Type': 'application/json' }, // ✅ no "Bearer"
+      body: JSON.stringify({ trackingNumbers: trackingNumbers.map(String), limit: trackingNumbers.length }),
+    });
+    text = await res.text();
+  } catch (e) {
+    throw new Error(`فشل الاتصال ببوسطة — ${e.message}`);
+  }
+
+  if (!res.ok) {
+    throw new Error(
+      `بوسطة ردّت HTTP ${res.status}` +
+      (res.status === 401 || res.status === 403 ? ' (مفتاح BOSTA_API_KEY غلط أو منتهي)' : '') +
+      ` — ${text.slice(0, 160)}`
+    );
+  }
+
+  let data;
+  try { data = JSON.parse(text); }
+  catch { throw new Error(`رد بوسطة مش JSON صالح — ${text.slice(0, 160)}`); }
+
+  return extractDeliveries(data);
+}
+
 function extractDeliveries(raw) {
   if (Array.isArray(raw?.data?.deliveries)) return raw.data.deliveries;
   if (Array.isArray(raw?.data))             return raw.data;
   if (Array.isArray(raw?.deliveries))       return raw.deliveries;
   if (raw?.trackingNumber)                  return [raw];
   return [];
+}
+
+// ─── §HELPERS::assertEnv ───
+// متغير ناقص لازم يوقف العملية **برسالة باسمه** بدل ما يتحوّل لفشل صامت:
+// SHOP_DOMAIN ناقصة بتدّي `"error code: 1003" is not valid JSON`، و
+// BOSTA_API_KEY ناقصة بتدّي "كل الشحنات غير موجودة".
+// (الأداة دي مش أداة مخزون — مفيش LOCATION_ID مطلوب.)
+const ENV_REQUIRED = {
+  shopify: ['SHOP_DOMAIN', 'CLIENT_ID', 'CLIENT_SECRET'],
+  bosta:   ['BOSTA_API_KEY'],
+};
+
+function assertEnv(env, ...groups) {
+  const missing = [];
+  for (const g of groups) {
+    for (const key of (ENV_REQUIRED[g] || [])) {
+      if (env[key] === undefined || env[key] === null || String(env[key]).trim() === '') missing.push(key);
+    }
+  }
+  if (!env.DB) missing.push('DB (D1 binding)');
+  if (missing.length) {
+    throw new Error(
+      `متغيرات ناقصة في الـ Worker: ${missing.join('، ')} — ضِفها من ` +
+      `Dashboard → Settings → Variables ثم Promote النسخة. (شغّل ?action=diag)`
+    );
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -297,13 +429,62 @@ async function getAccessToken(env) {
   return data.access_token;
 }
 
-async function shopifyGQL(env, token, query, variables = {}) {
-  const resp = await fetch(`https://${env.SHOP_DOMAIN}/admin/api/2026-01/graphql.json`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
-    body:    JSON.stringify({ query, variables }),
-  });
-  return resp.json();
+// ─── §SHOPIFY::shopifyGQL — العقد الإلزامي (worker-builder Step 5A ①) ───
+// أي فشل بيترمي. مفيش رد بيعدّي وهو فاشل:
+//   ① فشل شبكة  ② HTTP status  ③ رد مش JSON  ④ data.errors  ⑤ data فاضية
+// ⚠️ ④ هو الخطير: لما ميوتيشن تترفض على مستوى الحقل (صلاحية ناقصة مثلاً)
+// شوبيفاي بترد {"errors":[…],"data":null} — والـ userErrors بتبقى [] لأن مفيش
+// payload أصلاً. كود بيفحص userErrors بس بيقرا ده **نجاح**.
+// ⚠️ وفي الأداة دي تحديدًا، النسخة القديمة (`return resp.json()`) كانت بتحوّل
+// أي 401/429/5xx لـ `resp.data === undefined` → كل أوردر بيترفض بـ
+// "الأوردر غير موجود على شوبيفاي" — رسالة كاذبة بتخلي الموظف يصدّق إن الأوردر
+// مش موجود أصلاً بدل ما يشوف إن الاتصال هو اللي فشل.
+async function shopifyGQL(env, token, query, variables = {}, opName = 'shopify') {
+  const MAX_ATTEMPTS = 3;
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let resp, text;
+    try {
+      resp = await fetch(`https://${env.SHOP_DOMAIN}/admin/api/2026-01/graphql.json`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+        body:    JSON.stringify({ query, variables }),
+      });
+      text = await resp.text();
+    } catch (e) {
+      lastErr = new Error(`${opName}: فشل الاتصال بشوبيفاي — ${e.message}`);
+      if (attempt < MAX_ATTEMPTS) { await new Promise(r => setTimeout(r, 400 * attempt)); continue; }
+      throw lastErr;
+    }
+
+    if (!resp.ok) {
+      const retriable = resp.status === 429 || resp.status >= 500;
+      lastErr = new Error(`${opName}: شوبيفاي ردّت HTTP ${resp.status} — ${text.slice(0, 180)}`);
+      if (retriable && attempt < MAX_ATTEMPTS) { await new Promise(r => setTimeout(r, 700 * attempt)); continue; }
+      throw lastErr;
+    }
+
+    let data;
+    try { data = JSON.parse(text); }
+    catch { throw new Error(`${opName}: رد شوبيفاي مش JSON صالح — ${text.slice(0, 180)}`); }
+
+    if (Array.isArray(data.errors) && data.errors.length) {
+      const codes = data.errors.map(e => e?.extensions?.code).filter(Boolean);
+      lastErr = new Error(
+        `${opName}: ${data.errors.map(e => e.message).join(' | ')}` +
+        (codes.length ? ` [${codes.join(',')}]` : '')
+      );
+      if (codes.includes('THROTTLED') && attempt < MAX_ATTEMPTS) {
+        await new Promise(r => setTimeout(r, 1200 * attempt)); continue;
+      }
+      throw lastErr;
+    }
+
+    if (!data.data) throw new Error(`${opName}: رد شوبيفاي بدون data — ${text.slice(0, 180)}`);
+    return data;
+  }
+  throw lastErr || new Error(`${opName}: فشل غير معروف`);
 }
 
 // ─── §SHOPIFY::fetchShopifyOrdersByNames ───
@@ -339,8 +520,8 @@ async function fetchShopifyOrdersByNames(env, token, orderNames) {
       }`;
     }).join('\n');
 
-    const resp = await shopifyGQL(env, token, `query { ${aliasBlocks} }`);
-    const data = resp?.data || {};
+    const resp = await shopifyGQL(env, token, `query { ${aliasBlocks} }`, {}, 'ordersByName');
+    const data = resp.data;
 
     chunk.forEach((name, idx) => {
       const node = data[`o${idx}`]?.edges?.[0]?.node || null;
@@ -406,35 +587,59 @@ const METAFIELDS_SET_MUTATION = `
   }
 `;
 
+// النجاح بيتحدد **من رد شوبيفاي** (`owner.id` الراجع فعلاً)، مش من عدد المدخلات
+// — ده الفحص ③ في Step 5A، وهو اللي بيمنع "userErrors فاضية = اتنفّذت".
+// كل chunk في try/catch لوحده: chunk فاشل مايوقّعش الدفعات اللي بعده، وخطأه
+// بيتسجّل منسوبًا **للمفاتيح بتاعته هو** بدل ما رسالة واحدة تتنسب لكل الصفوف.
 async function metafieldsSetBatch(env, token, metafieldInputs) {
   const CHUNK = 25;
   const successSet = new Set();
   const errorsList = [];
+  const errorByKey = {};   // `${ownerId}::${key}` → رسالة الخطأ الخاصة بالصف ده
+
+  const noteError = (keys, message) => {
+    errorsList.push({ field: null, message });
+    for (const k of keys) if (!errorByKey[k]) errorByKey[k] = message;
+  };
 
   for (let i = 0; i < metafieldInputs.length; i += CHUNK) {
-    const chunk = metafieldInputs.slice(i, i + CHUNK);
-    const resp  = await shopifyGQL(env, token, METAFIELDS_SET_MUTATION, { metafields: chunk });
-    const result = resp?.data?.metafieldsSet;
+    const chunk     = metafieldInputs.slice(i, i + CHUNK);
+    const chunkKeys = chunk.map(m => `${m.ownerId}::${m.key}`);
 
-    // ⚠️ لو فيه top-level GraphQL errors (صلاحيات، throttle، حقل غلط) الـ data
-    // بترجع null والـ userErrors فاضية — من غير التقاطها هنا الرسالة الحقيقية
-    // بتضيع وبيظهر بدلها "فشل تحديث الميتافيلد" العام اللي مش بيفيد في التشخيص.
-    if (Array.isArray(resp?.errors) && resp.errors.length) {
-      for (const e of resp.errors) {
-        errorsList.push({ field: null, message: `GraphQL: ${e.message}` });
-      }
-    } else if (!result) {
-      errorsList.push({ field: null, message: 'رد غير متوقع من شوبيفاي (metafieldsSet فاضي)' });
+    let resp;
+    try {
+      resp = await shopifyGQL(env, token, METAFIELDS_SET_MUTATION, { metafields: chunk }, 'metafieldsSet');
+    } catch (err) {
+      // ① فشل شبكة/HTTP/top-level GraphQL — shopifyGQL بترمي بالرسالة الحقيقية
+      noteError(chunkKeys, err.message);
+      continue;
     }
 
-    for (const m of (result?.metafields || [])) {
+    const result = resp.data?.metafieldsSet;
+    if (!result) {
+      noteError(chunkKeys, 'رد غير متوقع من شوبيفاي (metafieldsSet فاضي)');
+      continue;
+    }
+
+    // ② userErrors
+    for (const e of (result.userErrors || [])) {
+      errorsList.push(e);
+    }
+    const userErrMsg = (result.userErrors || []).map(e => e.message).join(' | ');
+
+    // ③ تأكيد الـ payload — الصف بيتحسب ناجح **بس** لو شوبيفاي رجّعت owner.id بتاعه
+    for (const m of (result.metafields || [])) {
       const ownerId = m?.owner?.id;           // ← owner.id مش ownerId
       if (ownerId) successSet.add(`${ownerId}::${m.key}`);
     }
-    for (const e of (result?.userErrors || [])) errorsList.push(e);
+    for (const k of chunkKeys) {
+      if (!successSet.has(k) && !errorByKey[k]) {
+        errorByKey[k] = userErrMsg || 'شوبيفاي ما أكدتش كتابة الميتافيلد';
+      }
+    }
   }
 
-  return { successSet, errorsList };
+  return { successSet, errorsList, errorByKey };
 }
 
 // ─── §SHOPIFY::createFulfillment ───
@@ -458,18 +663,23 @@ const FULFILLMENT_CREATE_MUTATION = `
 async function createFulfillment(env, token, openFulfillmentOrders) {
   if (!openFulfillmentOrders.length) return 0;
 
+  // ① top-level — shopifyGQL بترمي لوحدها على فشل الشبكة/HTTP/data.errors
   const resp = await shopifyGQL(env, token, FULFILLMENT_CREATE_MUTATION, {
     fulfillment: {
       notifyCustomer: false,
       lineItemsByFulfillmentOrder: openFulfillmentOrders.map(fo => ({ fulfillmentOrderId: fo.id })),
     },
-  });
+  }, 'fulfillmentCreate');
 
-  if (Array.isArray(resp?.errors) && resp.errors.length) {
-    throw new Error(`GraphQL: ${resp.errors.map(e => e.message).join(' | ')}`);
-  }
-  const errs = resp?.data?.fulfillmentCreate?.userErrors || [];
+  const result = resp.data?.fulfillmentCreate;
+
+  // ② userErrors
+  const errs = result?.userErrors || [];
   if (errs.length) throw new Error('fulfillmentCreate: ' + errs.map(e => e.message).join(' | '));
+
+  // ③ تأكيد الـ payload — userErrors فاضية معناها "مفيش اعتراض" مش "اتنفّذت"
+  if (!result?.fulfillment?.id) throw new Error('fulfillmentCreate: شوبيفاي ما أكدتش إنشاء الفلفلمنت');
+
   return openFulfillmentOrders.length;
 }
 
@@ -559,43 +769,46 @@ export default {
 
       // ─── §LOG-ENDPOINTS ─────────────────────────────────────────────────
 
-      // get_logs — server-side search + pagination. Only this tool's writes
-      // (tool='metafields_change' AND extra.sourceTool = SOURCE_TOOL). login/logout excluded by design.
+      // get_logs — server-side filtering + pagination. Only this tool's writes
+      // (tool='metafields_change' AND extra.sourceTool = SOURCE_TOOL) + السجل
+      // القديم (bosta_tracker/tagged). login/logout مستثنيين في SQL.
+      // ⚠️ التلاتة بيقروا الفلاتر من **نفس المصدر** (logParamsFrom) — endpoint
+      // بيفلتر بشكل مختلف عن اللي جنبه هو بالظبط اللي بيخلي التصدير ينزّل
+      // غير المعروض على الشاشة.
       if (action === 'get_logs') {
-        const employee = url.searchParams.get('employee') || null;
-        const search   = url.searchParams.get('search')   || null;
-        const limit    = Math.min(parseInt(url.searchParams.get('limit')  || '100'), 100);
-        const offset   = Math.max(parseInt(url.searchParams.get('offset') || '0'),    0);
-
-        let sql = `SELECT * FROM logs WHERE ${LOG_SCOPE_SQL}`;
-        const b = [SOURCE_TOOL_LIKE];
-
-        if (employee) { sql += ' AND employee = ?'; b.push(employee); }
-        if (search) {
-          sql += ' AND (order_name LIKE ? OR notes LIKE ?)';
-          b.push(`%${search}%`, `%${search}%`);
-        }
-
-        sql += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
-        b.push(limit, offset);
-
-        const entries = (await env.DB.prepare(sql).bind(...b).all()).results;
+        const p      = logParamsFrom(url, null);
+        const limit  = Math.min(parseInt(url.searchParams.get('limit')  || '100'), 100);
+        const offset = Math.max(parseInt(url.searchParams.get('offset') || '0'),    0);
+        const entries = await getScopedLogs(env.DB, { ...p, limit, offset });
         return json({ ok: true, entries }, 200, request);
       }
 
       if (action === 'get_logs_count') {
-        const employee = url.searchParams.get('employee') || null;
-        const search   = url.searchParams.get('search')   || null;
-        const total    = await getLogsCount(env.DB, { employee, search });
+        const total = await getLogsCount(env.DB, logParamsFrom(url, null));
         return json({ ok: true, total }, 200, request);
       }
 
+      // ⚠️ الصفوف **والحقيقة** مع بعض — ممنوع يرجّع entries لوحدها. الدالة
+      // بتقص عند LOG_EXPORT_MAX في السكوت، فمن غير cap/total/truncated الواجهة
+      // بتقول "تم تصدير 2000 عملية ✓" على ملف ناقص.
       if (action === 'get_logs_export') {
-        const employee = url.searchParams.get('employee') || null;
-        const search   = url.searchParams.get('search')   || null;
-        const entries  = await getLogsExport(env.DB, { employee, search });
-        return json({ ok: true, entries }, 200, request);
+        const p = logParamsFrom(url, null);
+        const [entries, total] = await Promise.all([
+          getLogsExport(env.DB, p),
+          getLogsCount(env.DB, p),          // نفس الفلاتر بالظبط
+        ]);
+        return json({ ok: true, entries, cap: LOG_EXPORT_MAX, total,
+                      truncated: total > LOG_EXPORT_MAX }, 200, request);
       }
+
+      // ─── §DIAG ──────────────────────────────────────────────────────────
+      // get_config — الواجهة بتقارن الرقم ده بـ MIN_WORKER_VERSION عندها،
+      // فبيكشف Promote ناقص أو rollback أو Worker شبح.
+      if (action === 'get_config') {
+        return json({ ok: true, version: WORKER_VERSION, tool: SOURCE_TOOL }, 200, request);
+      }
+
+      if (action === 'diag') return handleDiag(request, env);
 
       return json({ error: 'Unknown action' }, 404, request);
     } catch (err) {
@@ -603,6 +816,88 @@ export default {
     }
   },
 };
+
+// ─── §DIAG::handleDiag ───
+// فحص ذاتي **بدون أي كتابة**. بيكشف: متغير ناقص أو باسم فيه مسافة مخفية ·
+// صلاحيات تطبيق شوبيفاي · بوسطة · D1 · الـ Origin.
+// ⚠️ ممنوع يرجّع قيمة أي سر — **الأسماء والأطوال بس**.
+async function handleDiag(request, env) {
+  const checks = [];
+  const add = (name, ok, detail, hint = null) => checks.push({ name, ok, detail, hint });
+
+  // ① المتغيرات — الاسم والطول فقط (الطول بيكشف المسافة المخفية في القيمة)
+  const envKeys = Object.keys(env)
+    .filter(k => typeof env[k] === 'string')
+    .sort()
+    .map(k => ({ key: k, length: String(env[k]).length }));
+  const bindings = Object.keys(env).filter(k => typeof env[k] !== 'string').sort();
+
+  for (const [group, keys] of Object.entries(ENV_REQUIRED)) {
+    for (const key of keys) {
+      const raw = env[key];
+      const present = raw !== undefined && raw !== null && String(raw).trim() !== '';
+      const padded  = present && String(raw) !== String(raw).trim();
+      add(
+        `متغير ${key} (${group})`,
+        present && !padded,
+        present ? (padded ? `موجود بطول ${String(raw).length} — وفيه مسافة زايدة في أوله أو آخره` : `موجود بطول ${String(raw).length}`) : 'مفقود',
+        present ? (padded ? 'امسح المسافة من قيمة المتغير في الداشبورد ثم Promote' : null)
+                : 'Dashboard → Settings → Variables ثم Promote النسخة'
+      );
+    }
+  }
+  add('متغير WORKER_SECRET', !!env.WORKER_SECRET,
+      env.WORKER_SECRET ? `موجود بطول ${String(env.WORKER_SECRET).length}` : 'مفقود',
+      env.WORKER_SECRET ? null : 'ضِفه كـ Secret ثم Promote');
+
+  // ② D1
+  try {
+    const row = await env.DB.prepare('SELECT COUNT(*) as n FROM employees WHERE is_active = 1').first();
+    add('D1 (ecommoda-dev-logs)', true, `متصلة — ${row?.n ?? 0} موظف نشط`);
+  } catch (e) {
+    add('D1 (ecommoda-dev-logs)', false, e.message, 'راجع binding اسمه DB في wrangler.toml');
+  }
+
+  // ③ شوبيفاي — التوكن + صلاحيات التطبيق
+  let token = null;
+  try {
+    token = await getAccessToken(env);
+    add('شوبيفاي — OAuth', true, 'التوكن اتجاب بنجاح');
+  } catch (e) {
+    add('شوبيفاي — OAuth', false, e.message, 'راجع CLIENT_ID / CLIENT_SECRET / SHOP_DOMAIN');
+  }
+
+  if (token) {
+    try {
+      const d = await shopifyGQL(env, token,
+        `query { currentAppInstallation { accessScopes { handle } } }`, {}, 'diagScopes');
+      const scopes = (d.data?.currentAppInstallation?.accessScopes || []).map(x => x.handle);
+      const needed = ['read_orders', 'write_orders', 'read_merchant_managed_fulfillment_orders', 'write_merchant_managed_fulfillment_orders'];
+      const missing = needed.filter(n => !scopes.includes(n));
+      add('شوبيفاي — الصلاحيات', missing.length === 0,
+          missing.length ? `ناقص: ${missing.join('، ')}` : `${scopes.length} صلاحية — الكتابة والفلفلمنت متاحين`,
+          missing.length ? 'ضِف الصلاحيات دي للتطبيق في شوبيفاي وأعد التثبيت' : null);
+    } catch (e) {
+      add('شوبيفاي — الصلاحيات', false, e.message);
+    }
+  }
+
+  // ④ بوسطة — نداء بحث فاضي بيتأكد من المفتاح من غير ما يغيّر أي حاجة
+  try {
+    await bostaSearch(env, ['0']);
+    add('بوسطة — المفتاح', true, 'النداء رجع بنجاح');
+  } catch (e) {
+    add('بوسطة — المفتاح', false, e.message, 'راجع BOSTA_API_KEY (بدون بادئة Bearer)');
+  }
+
+  return json({
+    ok: checks.every(c => c.ok),
+    version: WORKER_VERSION,
+    origin:  request.headers.get('Origin') || '(بدون Origin)',
+    checks,
+    env: { vars: envKeys, bindings },   // ← أسماء وأطوال فقط — مفيش أي قيمة سر
+  }, 200, request);
+}
 
 // ─── §LOOKUP::handleLookup ───
 // POST body: { trackingNumbers: ["123456", ...] }
@@ -615,28 +910,28 @@ export default {
 async function handleLookup(request, env) {
   let body;
   try { body = await request.json(); }
-  catch { return json({ error: 'Invalid JSON' }, 400); }
+  catch { return json({ error: 'Invalid JSON' }, 400, request); }
 
   const { trackingNumbers } = body;
   if (!Array.isArray(trackingNumbers) || trackingNumbers.length === 0)
-    return json({ error: 'trackingNumbers[] مطلوب' }, 400);
+    return json({ error: 'trackingNumbers[] مطلوب' }, 400, request);
 
-  // 1) Bosta lookup
+  assertEnv(env, 'shopify', 'bosta');
+
+  // 1) Bosta lookup — الفشل بيتسجّل ومعاه الأرقام المتأثرة، مش بيتبلع
   const CHUNK = 50;
   const allDeliveries = [];
+  const bostaErrors   = [];            // [{ message, trackingNumbers[] }]
+  const bostaFailed   = new Set();     // أرقام التتبع اللي الاستعلام عنها فشل فعلاً
 
   for (let i = 0; i < trackingNumbers.length; i += CHUNK) {
     const chunk = trackingNumbers.slice(i, i + CHUNK);
     try {
-      const res = await fetch(`${BOSTA_API_BASE}/deliveries/search`, {
-        method:  'POST',
-        headers: { Authorization: env.BOSTA_API_KEY, 'Content-Type': 'application/json' }, // ✅ no "Bearer"
-        body: JSON.stringify({ trackingNumbers: chunk.map(String), limit: chunk.length }),
-      });
-      if (!res.ok) continue;
-      const data = await res.json();
-      allDeliveries.push(...extractDeliveries(data));
-    } catch (_) {}
+      allDeliveries.push(...await bostaSearch(env, chunk));
+    } catch (err) {
+      bostaErrors.push({ message: err.message, trackingNumbers: chunk.map(String) });
+      for (const tn of chunk) bostaFailed.add(String(tn));
+    }
   }
 
   const deliveryMap = {};
@@ -648,7 +943,13 @@ async function handleLookup(request, env) {
   const bostaResults = trackingNumbers.map(tn => {
     const d = deliveryMap[String(tn)];
     if (!d) {
-      return { trackingNumber: String(tn), businessRef: null, orderType: null, state: null, stateCode: null, found: false };
+      // ⚠️ الفرق بين الحالتين مهم: "تعذّر الاستعلام" ≠ "غير موجودة".
+      // bostaFailed معناها إن النداء نفسه فشل — الشحنة ممكن تكون موجودة تمامًا.
+      return {
+        trackingNumber: String(tn), businessRef: null, orderType: null,
+        state: null, stateCode: null, found: false,
+        bostaFailed: bostaFailed.has(String(tn)),
+      };
     }
     const orderType = String(d.type?.value || d.type || '');
     return {
@@ -658,6 +959,7 @@ async function handleLookup(request, env) {
       state:          STATE_MAP[d.state?.code] || d.state?.value || '', // ✅ STATE_MAP[code] — never state.value
       stateCode:      d.state?.code ?? null,
       found:          true,
+      bostaFailed:    false,
     };
   });
 
@@ -678,7 +980,11 @@ async function handleLookup(request, env) {
   // 3) Merge + validate
   const results = bostaResults.map(r => {
     if (!r.found) {
-      return { ...r, orderId: null, s1: null, s2: null, valid: false, rejectReason: null, targetField: null, targetValue: null, machine: null };
+      return {
+        ...r, orderId: null, s1: null, s2: null, valid: false,
+        rejectReason: r.bostaFailed ? 'تعذّر الاستعلام من بوسطة — الشحنة غير مؤكَّدة' : null,
+        targetField: null, targetValue: null, machine: null,
+      };
     }
 
     if (shopifyError) {
@@ -706,7 +1012,7 @@ async function handleLookup(request, env) {
     };
   });
 
-  return json({ ok: true, results });
+  return json({ ok: true, results, bostaErrors, shopifyError }, 200, request);
 }
 
 // ─── §UPDATE::handleUpdate ───
@@ -722,22 +1028,24 @@ async function handleLookup(request, env) {
 async function handleUpdate(request, env) {
   let body;
   try { body = await request.json(); }
-  catch { return json({ error: 'Invalid JSON' }, 400); }
+  catch { return json({ error: 'Invalid JSON' }, 400, request); }
 
   const { items, employee } = body;
   if (!Array.isArray(items) || items.length === 0)
-    return json({ error: 'items[] مطلوب' }, 400);
+    return json({ error: 'items[] مطلوب' }, 400, request);
+
+  assertEnv(env, 'shopify');
 
   let token;
   try { token = await getAccessToken(env); }
-  catch (err) { return json({ error: `Token error: ${err.message}` }, 500); }
+  catch (err) { return json({ error: `Token error: ${err.message}` }, 500, request); }
 
   const orderNames = items.map(it => it.orderName);
   let freshMap;
   try {
     freshMap = await fetchShopifyOrdersByNames(env, token, orderNames);
   } catch (err) {
-    return json({ error: `Shopify lookup failed: ${err.message}` }, 500);
+    return json({ error: `Shopify lookup failed: ${err.message}` }, 500, request);
   }
 
   const results       = [];
@@ -748,19 +1056,19 @@ async function handleUpdate(request, env) {
     const cleanName = cleanOrderName(item.orderName);
 
     if (!cleanName) {
-      results.push({ orderName: item.orderName, success: false, error: 'Missing orderName' });
+      results.push({ orderName: item.orderName, success: false, status: 'error', actions: [], error: 'Missing orderName' });
       continue;
     }
 
     const sOrder = freshMap[cleanName];
     if (!sOrder) {
-      results.push({ orderName: item.orderName, success: false, error: 'الأوردر غير موجود على شوبيفاي' });
+      results.push({ orderName: item.orderName, success: false, status: 'error', actions: [], error: 'الأوردر غير موجود على شوبيفاي' });
       continue;
     }
 
     const v = validateTransition(item.orderType, sOrder);
     if (!v.valid) {
-      results.push({ orderName: item.orderName, success: false, error: `الحالة تغيرت قبل التحديث — ${v.reason}` });
+      results.push({ orderName: item.orderName, success: false, status: 'error', actions: [], error: `الحالة تغيرت قبل التحديث — ${v.reason}` });
       continue;
     }
 
@@ -801,32 +1109,57 @@ async function handleUpdate(request, env) {
     } catch (err) {
       for (const w of toWrite) {
         const meta = perOrderMeta[`${w.ownerId}::${w.key}`];
-        results.push({ orderName: meta.orderName, success: false, error: `Shopify error: ${err.message}` });
+        results.push({ orderName: meta.orderName, success: false, status: 'error', actions: [], error: `Shopify error: ${err.message}` });
       }
       batchResult = null;
     }
 
     if (batchResult) {
-      const { successSet, errorsList } = batchResult;
+      const { successSet, errorByKey } = batchResult;
       for (const w of toWrite) {
         const metaKey = `${w.ownerId}::${w.key}`;
         const meta    = perOrderMeta[metaKey];
 
-        if (successSet.has(metaKey)) {
-          // ─── §UPDATE::fulfillAfterWrite ───
-          // Metafield already written successfully at this point. Fulfillment
-          // is best-effort on top of it — a failure here is reported as a
-          // warning on the row, never as a rollback of the status write.
-          const fulfillment = { attempted: false, created: 0, error: null };
-          if (meta.openFulfillmentOrders.length) {
-            fulfillment.attempted = true;
-            try {
-              fulfillment.created = await createFulfillment(env, token, meta.openFulfillmentOrders);
-            } catch (err) {
-              fulfillment.error = err.message;
-            }
-          }
+        if (!successSet.has(metaKey)) {
+          // الخطأ منسوب **للصف ده** (errorByKey) مش أول رسالة في الدفعة كلها
+          results.push({
+            orderName: meta.orderName, success: false, status: 'error', actions: [],
+            orderId: meta.orderId,
+            error: errorByKey[metaKey] || 'فشل تحديث الميتافيلد',
+          });
+          continue;
+        }
 
+        // ⚠️ من هنا وطالع: الميتافيلد **اتكتب فعلاً على شوبيفاي**. أي فشل بعد
+        // كده مايجوزش يتحوّل لـ "فشل" — لأن الحالة على شوبيفاي اتغيّرت فعلاً
+        // ومفيش rollback. الأكشنز بتتسجّل **لحظة ما تحصل** (Step 5A ⑤) عشان
+        // لو حصل استثناء بعد كده، السجل يفضل بيقول إن الكتابة تمّت.
+        const actions  = [`كتابة ${meta.machine} = ${meta.valueAfter}`];
+        const warnings = [];
+
+        // ─── §UPDATE::fulfillAfterWrite ───
+        // Fulfillment best-effort فوق كتابة تمّت — فشله warning على الصف،
+        // مش rollback ولا فشل كامل.
+        const fulfillment = { attempted: false, created: 0, error: null };
+        if (meta.openFulfillmentOrders.length) {
+          fulfillment.attempted = true;
+          try {
+            fulfillment.created = await createFulfillment(env, token, meta.openFulfillmentOrders);
+            actions.push(`فلفلمنت: ${fulfillment.created}`);
+          } catch (err) {
+            fulfillment.error = err.message;
+            warnings.push(`الفلفلمنت فشل: ${err.message}`);
+          }
+        }
+
+        // ⚠️ تلات حالات مش اتنين (Step 5A ④) — warning ممنوع يتحسب نجاح
+        const status = warnings.length ? 'warning' : 'success';
+
+        // ⚠️ فشل D1 بيرجع logged:false — **مش** بيرمي (Step 5A ⑦). الاستثناء
+        // هنا كان بيطلع لبرّه handleUpdate ويرجّع 500 على عملية اتنفّذت فعلاً
+        // على شوبيفاي: الموظف يشوف فشل كامل والحالة متغيّرة.
+        let logged = true, logError = null;
+        try {
           await writeLog(env.DB, {
             tool:        'metafields_change',
             type:        'update',
@@ -844,29 +1177,38 @@ async function handleUpdate(request, env) {
               machine:        meta.machine,
               field:          meta.field,
               fulfillment,
+              actions,
+              result: status,          // ← عمود "النتيجة" في تاب السجل بيقرا ده
             },
           });
-          results.push({
-            orderName:   meta.orderName,
-            success:     true,
-            orderId:     meta.orderId,
-            field:       meta.field,
-            valueBefore: meta.valueBefore,
-            valueAfter:  meta.valueAfter,
-            fulfillment,
-          });
-        } else {
-          const errMsg = errorsList.length ? errorsList[0].message : 'فشل تحديث الميتافيلد';
-          results.push({ orderName: meta.orderName, success: false, error: errMsg });
+        } catch (e) {
+          logged = false; logError = e.message;
         }
+
+        results.push({
+          orderName:   meta.orderName,
+          success:     true,            // الكتابة الأساسية تمّت — الحكم النهائي في status
+          status,
+          actions,
+          warning:     warnings.length ? warnings.join(' · ') : null,
+          logged,
+          logError,
+          orderId:     meta.orderId,
+          field:       meta.field,
+          valueBefore: meta.valueBefore,
+          valueAfter:  meta.valueAfter,
+          fulfillment,
+        });
       }
     }
   }
 
-  const succeeded = results.filter(r => r.success).length;
+  const succeeded = results.filter(r => r.status === 'success').length;
+  const warned    = results.filter(r => r.status === 'warning').length;
+  const failed    = results.filter(r => r.status === 'error').length;
   return json({
     ok: true,
     results,
-    summary: { total: items.length, succeeded, failed: items.length - succeeded },
-  });
+    summary: { total: items.length, succeeded, warned, failed },
+  }, 200, request);
 }
