@@ -2,7 +2,7 @@
 
 # Bosta Orders Shipped Scanner
 
-![version](https://img.shields.io/badge/version-v1.1.0-blue)
+![version](https://img.shields.io/badge/version-v1.2.0-blue)
 
 سكانر شحن الأوردرات من بوسطة — أداة مخزن داخلية لـ EcomModa.
 
@@ -26,6 +26,12 @@
 الموظفين ثابتين في الكود (`§CONFIG`) — مش أسرار، والحماية في الـ Secret نفسه
 وفي الـ CORS allowlist.
 
+## CORS
+
+الـ Worker بيقبل نداءات من **`https://ecommoda-dev.github.io`** بس (Option B).
+فتح `index.html` من الجهاز (`file://`) أو من أي دومين تاني مش هيوصل للـ Worker —
+ده مقصود، والاختبار بيتعمل على نسخة GitHub Pages.
+
 ## فحص سريع لما حاجة متبوّظة
 
 - زرار **🩺 افحص الأداة والاتصالات** جوّه الإعدادات بينادي `?action=diag`
@@ -34,6 +40,6 @@
 - بادج **⚠️ الـ Worker نسخة قديمة** في الهيدر بيظهر لو الـ Worker المنشور أقدم
   من `MIN_WORKER_VERSION` — معناه Promote ناقص أو rollback.
 
-آخر تحديث: 03-09-2026 — 14:20
+آخر تحديث: 03-09-2026 — 15:05
 
 </div>

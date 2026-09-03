@@ -13,6 +13,11 @@
 //   النتيجة + في extra.fulfillment بالـ D1 log، مش كفشل كامل للصف.
 //   لو مفيش fulfillmentOrders بحالة OPEN (الأوردر متعمله fulfill من قبل —
 //   مثلاً إعادة شحن) بيتم تجاهل الخطوة دي بصمت وتكمل كتابة الميتافيلد عادي.
+// v3.2.1 — CORS اتحوّل من Option A (wildcard) لـ Option B (ALLOWED_ORIGINS)
+//   على حساب EcomModa على GitHub Pages بس — قرار أحمد 03-09-2026، عشان الأداة
+//   بقت بتكتب على شوبيفاي زي باقي أدوات الكتابة. ومعاه: الافتراضي في json()
+//   بقى أول أصل مسموح بدل '*' (نداء ناسي الـ request كان هيسيب رسالة الخطأ
+//   مقروءة من أي أصل)، وكل نداءات json في lookup/update بتمرر request.
 // v3.2.0 — تطبيق عقد النداءات الخارجية (worker-builder Step 5A) بالكامل:
 //   ① shopifyGQL بقت النسخة الكاملة (فحص resp.ok · رد مش JSON · data.errors ·
 //      data فاضية + retry على THROTTLED) بدل `return resp.json()` — اللي كان
@@ -54,7 +59,7 @@
 // ══════════════════════════════════════════════════════════════
 // §CONSTANTS
 // ══════════════════════════════════════════════════════════════
-const WORKER_VERSION = '3.2.0';                             // ?action=get_config — الواجهة بتقارنه بـ MIN_WORKER_VERSION
+const WORKER_VERSION = '3.2.1';                             // ?action=get_config — الواجهة بتقارنه بـ MIN_WORKER_VERSION
 const TOOL_NAME      = 'bosta_tracker';                    // login/logout D1 logging only
 const SOURCE_TOOL     = 'bosta_orders_shipped_scanner';     // tag used in extra.sourceTool for status-write logs
 const SOURCE_TOOL_LIKE = `%"sourceTool":"${SOURCE_TOOL}"%`;
@@ -85,21 +90,34 @@ const S2_STATUS = {
   RETURNED:           'Returned',
 };
 
-// ── CORS (Option A — Wildcard: Bosta/read tool) ───────────────────────────────
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  'Content-Type': 'application/json',
-};
-function getCORS(_req) { return CORS_HEADERS; }
+// ── CORS (Option B — ALLOWED_ORIGINS) ─────────────────────────────────────────
+// الأداة دي بتكتب على شوبيفاي (ميتافيلد + فلفلمنت) — فبتاخد القائمة الصارمة زي
+// باقي أدوات الكتابة، مش الـ wildcard. قرار أحمد 03-09-2026: حساب EcomModa على
+// GitHub Pages بس.
+const ALLOWED_ORIGINS = [
+  'https://ecommoda-dev.github.io',
+];
+function getCORS(request) {
+  const origin  = request?.headers?.get('Origin') || '';
+  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin':  allowed,
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Vary': 'Origin',
+  };
+}
 
 // ══════════════════════════════════════════════════════════════
 // §HELPERS
 // ══════════════════════════════════════════════════════════════
+// ⚠️ الافتراضي بقى **أول أصل مسموح** مش '*'. مع Option B، نداء json() ناسي
+// الـ request كان هيرجّع رد بـ '*' وسط ردود مقيّدة — يعني الردود اللي فيها رسائل
+// الخطأ (وهي أكتر حاجة بتتسرّب) تفضل مقروءة من أي أصل. الثغرة بتتفتح بالنسيان،
+// مش بقرار، فالافتراضي نفسه اتقفل.
 function json(data, status = 200, request = null) {
   const headers = { 'Content-Type': 'application/json' };
-  Object.assign(headers, request ? getCORS(request) : { 'Access-Control-Allow-Origin': '*' });
+  Object.assign(headers, getCORS(request));
   return new Response(JSON.stringify(data), { status, headers });
 }
 
@@ -892,11 +910,11 @@ async function handleDiag(request, env) {
 async function handleLookup(request, env) {
   let body;
   try { body = await request.json(); }
-  catch { return json({ error: 'Invalid JSON' }, 400); }
+  catch { return json({ error: 'Invalid JSON' }, 400, request); }
 
   const { trackingNumbers } = body;
   if (!Array.isArray(trackingNumbers) || trackingNumbers.length === 0)
-    return json({ error: 'trackingNumbers[] مطلوب' }, 400);
+    return json({ error: 'trackingNumbers[] مطلوب' }, 400, request);
 
   assertEnv(env, 'shopify', 'bosta');
 
@@ -994,7 +1012,7 @@ async function handleLookup(request, env) {
     };
   });
 
-  return json({ ok: true, results, bostaErrors, shopifyError });
+  return json({ ok: true, results, bostaErrors, shopifyError }, 200, request);
 }
 
 // ─── §UPDATE::handleUpdate ───
@@ -1010,24 +1028,24 @@ async function handleLookup(request, env) {
 async function handleUpdate(request, env) {
   let body;
   try { body = await request.json(); }
-  catch { return json({ error: 'Invalid JSON' }, 400); }
+  catch { return json({ error: 'Invalid JSON' }, 400, request); }
 
   const { items, employee } = body;
   if (!Array.isArray(items) || items.length === 0)
-    return json({ error: 'items[] مطلوب' }, 400);
+    return json({ error: 'items[] مطلوب' }, 400, request);
 
   assertEnv(env, 'shopify');
 
   let token;
   try { token = await getAccessToken(env); }
-  catch (err) { return json({ error: `Token error: ${err.message}` }, 500); }
+  catch (err) { return json({ error: `Token error: ${err.message}` }, 500, request); }
 
   const orderNames = items.map(it => it.orderName);
   let freshMap;
   try {
     freshMap = await fetchShopifyOrdersByNames(env, token, orderNames);
   } catch (err) {
-    return json({ error: `Shopify lookup failed: ${err.message}` }, 500);
+    return json({ error: `Shopify lookup failed: ${err.message}` }, 500, request);
   }
 
   const results       = [];
@@ -1192,5 +1210,5 @@ async function handleUpdate(request, env) {
     ok: true,
     results,
     summary: { total: items.length, succeeded, warned, failed },
-  });
+  }, 200, request);
 }
