@@ -33,6 +33,8 @@
 //   ?action=get_logs         GET  — server-side search + pagination (metafields_change فقط لهذه الأداة)
 //   ?action=get_logs_count   GET  — total count matching filters
 //   ?action=get_logs_export  GET  — full export, limit 2000, no pagination
+//
+// skills: constants v1.4.3 — 03-09-2026
 
 // ══════════════════════════════════════════════════════════════
 // §CONSTANTS
