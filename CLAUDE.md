@@ -155,6 +155,38 @@ SELECT COUNT(*) as total, MAX(timestamp) as last_ts FROM logs WHERE tool = 'meta
 - صفوف السجل اللي اتكتبت **قبل v3.2** مالهاش `extra.result`، وعمود "النتيجة"
   بيعرضها **"—" مش "✓"** — إحنا فعليًا مش عارفين إن كان الفعل تم بالكامل وقتها.
 
+## ⚠️ §BOSTA اتنسخ في `Orders-Packing-Checker` (05-09-2026)
+
+أداة **Pack Checker** (`Orders-Packing-Checker`) ضافت في v2.5.0 مدخل «ماسح
+باركود بوسطة»: بتحوّل تراكينج بوسطة لرقم أوردر على شوبيفاي عشان تفتح شاشة
+التغليف. الكود اللي بتستخدمه **منقول حرفيًا من الأداة دي**:
+
+```
+Bosta-Orders-Shipped-Scanner/index.js  §BOSTA::bostaSearch · extractDeliveries · §HELPERS::cleanOrderName
+Orders-Packing-Checker/index.js        §BOSTA::bostaSearch · extractBostaDeliveries · cleanOrderName
+```
+
+**يعني المنطق ده دلوقتي في مكانين** — نفس عيلة خطر `classifyS2Subtype` بين
+`Pack Checker` و`Ready-to-Pack`، واللي أنتج فعلاً باج فضل شهور. أي إصلاح على:
+
+- الأشكال الأربعة لرد بوسطة (`extractDeliveries`)
+- `cleanOrderName` وفخّ الـ `#` في `businessReference`
+- قاعدة «الفشل بيرمي مايرجّعش قايمة فاضية» (مفتاح غلط ≠ شحنة غير موجودة)
+- ترويسة `Authorization` من غير `Bearer`
+
+**لازم يتعمل في الريبوهين.**
+
+الفروق المقصودة (مش انحراف يتصلّح):
+
+| | الأداة دي | Pack Checker |
+|---|---|---|
+| بتكتب على بوسطة؟ | ❌ (قراءة بس) | ❌ (قراءة بس) |
+| `STATE_MAP` بيدخل في قرار؟ | ✅ لأ — لكن الحالة بتتعرض وبتتسجّل | ❌ عرض بس، صفر قرار |
+| القرار متوقّف على إيه؟ | نوع بوسطة + S1/S2 (`validateTransition`) | شوبيفاي وحدها (`analyzeStage`) |
+| بتشتغل على دفعة؟ | ✅ `trackingNumbers[]` | ❌ رقم واحد لكل سكان |
+
+> الأداة دي **ما اتغيّرش فيها حاجة** في التعديل ده — السطور دي توثيق للخطر بس.
+
 ## استرجاع النسخ القديمة
 
 > ده بديل الـ tags — دفع الـ tags ممنوع من جلسات Claude Code السحابية.
@@ -180,6 +212,8 @@ git show 3a2c551^:1.1.html
 
 ## مسائل مفتوحة
 
+- ⚠️ **§BOSTA بقى في ريبوهين** (راجع القسم فوق) — أي إصلاح لازم يتعمل في
+  `Orders-Packing-Checker` كمان لحد ما الاتنين يشاركوا مصدر واحد.
 - 🔴 **تسجيل `type = 'rejected'` في `ecommoda-constants` §7** — قيمة بتتكتب فعلاً
   من v3.3.0 ولسه مش في الجدول (راجع قسم D1 فوق).
 - Build watch paths لسه `*` الافتراضي — تضييقها لـ `index.js` + `wrangler.toml` قرار داشبورد لأحمد (§13-ب في السكيل).
@@ -213,6 +247,6 @@ git show 3a2c551^:1.1.html
    شغّالة عادي. لو ظهر خطأ «تعذّر الوصول للـ Worker (شبكة أو CORS)» يبقى الأصل
    في `ALLOWED_ORIGINS` مش مطابق — راجعه حرف بحرف (بدون `/` في الآخر).
 
-آخر تحديث: 03-09-2026 — 21:30
+آخر تحديث: 05-09-2026 — 23:40
 
 </div>
