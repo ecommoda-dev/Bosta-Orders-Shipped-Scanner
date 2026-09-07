@@ -3159,10 +3159,16 @@ async function startUpdate() {
     const succeeded = data.summary?.succeeded || 0;
     const warned    = data.summary?.warned    || 0;
     const failed    = data.summary?.failed    || 0;
+    // ⚠️ الصف اللي اتوقف قبل الكتابة بيرجع في **الاتنين**: في `results` (بحالته)
+    //    وفي `rejected` (لأنه اتسجّل هناك). جمع المصدرين كان بيعدّ نفس الأوردر
+    //    مرتين — أوردر واحد يطلّع "خلاص متعمل: 2". الصفوف اللي مصدرها التوقف
+    //    وقت الكتابة (`stage === 'write'`) بتتشال من عدّادات المرفوض لأنها
+    //    **متعدّة أصلاً** في `results`.
+    const rejectedFromLookup = rejectedRows.filter(r => r.stage !== 'write');
     const already   = (data.summary?.already || 0)
-                    + rejectedRows.filter(r => r.already).length;
+                    + rejectedFromLookup.filter(r => r.already).length;
     const notLogged = (data.results || []).filter(r => r.logged === false).length;
-    const rejectedRealRows  = rejectedRows.filter(r => !r.already);
+    const rejectedRealRows  = rejectedFromLookup.filter(r => !r.already);
     const rejected  = rejectedRealRows.length;
     const rejectedNotLogged = rejectedRows.filter(r => r.logged === false).length;
     const becameValid       = (data.rejected || []).filter(r => r.becameValid).length;
@@ -3182,10 +3188,12 @@ async function startUpdate() {
     if (warned || rejected) playBeep('warn');
 
     showUpdateResultModal({
-      total: (data.summary?.total ?? items.length) + rejectedRows.length,
+      // الإجمالي = اللي اتبعت للكتابة + المرفوض **من الاستعلام** بس (المرفوض
+      // من التوقف وقت الكتابة متعدّ أصلاً جوّه `items`)
+      total: (data.summary?.total ?? items.length) + rejectedFromLookup.length,
       succeeded, warned, failed, already, notLogged,
       rejectedRows: rejectedRealRows,
-      alreadyRows:  rejectedRows.filter(r => r.already),
+      alreadyRows:  rejectedFromLookup.filter(r => r.already),
       becameValid, rejectedNotLogged,
     });
   } catch (err) {

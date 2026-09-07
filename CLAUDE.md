@@ -133,6 +133,20 @@ SELECT COUNT(*) as total, MAX(timestamp) as last_ts FROM logs WHERE tool = 'meta
 > الرفض و"خلاص اتعمل" بيتكتبوا تحت `type = 'rejected'` — لو اتحطّوا جوّه
 > `update` كان العدّاد هيقيس **المحاولات** مش الكتابة الفعلية.
 
+> 🔴 **تصحيح مطلوب على الاستعلام من v3.4.0.** الأداة بقت بتسجّل كمان
+> **محاولة الكتابة اللي شوبيفاي رفضتها** تحت `type = 'update'` بـ
+> `result = 'error'` — قبل كده الحالة دي كانت **بتسيب صفر أثر في D1** رغم إن
+> الميوتيشن اتبعتت فعلاً. يعني `update` دلوقتي = "لمس شوبيفاي" مش "نجح".
+> للنجاح الفعلي:
+
+```sql
+SELECT COUNT(*) as total, MAX(timestamp) as last_ts FROM logs WHERE tool = 'metafields_change' AND type = 'update' AND json_extract(extra,'$.result') = 'success' AND extra LIKE '%"sourceTool":"bosta_orders_shipped_scanner"%';
+```
+
+> ⚠️ الصفوف الـ ٨٩٣ اللي قبل v3.2 مالهاش `extra.result` خالص، فالاستعلام ده
+> **مابيعدّهاش**. رقم ١٢١٧ فوق (بدون الفلتر) هو اللي يتقارن بخط الأساس التاريخي؛
+> والاستعلام ده هو اللي يتقارن **من 03-09-2026 وطالع**.
+
 ## فخاخ الأداة دي
 
 - `businessReference` بتيجي من بوسطة بالـ `#` — أي مطابقة لازم تعدّي على

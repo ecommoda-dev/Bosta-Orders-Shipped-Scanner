@@ -3,6 +3,10 @@
 // Auth/D1 tool value : bosta_tracker | Types: login / logout  (unchanged — Universal D1 Auth)
 // Status-write log    : tool = metafields_change | type = update
 //                       (extra.sourceTool = "bosta_orders_shipped_scanner" — see §CONSTANTS)
+//                       extra.result = 'success' | 'warning' | 'error'
+//                       ⚠️ v3.4.0: `update` بقى معناه **"لمس شوبيفاي"** مش
+//                       "نجح" — محاولة كتابة شوبيفاي رفضتها بتتسجّل هنا بـ
+//                       result='error'. أي عدّ للنجاح لازم يفلتر على result.
 // Rejected log        : tool = metafields_change | type = rejected  (v3.3.0 — no Shopify write)
 //                       extra.result = 'rejected' | 'already'  (v3.4.0 — "خلاص اتعمل" حالة مستقلة)
 //                       extra.stage  = 'lookup' | 'write'      (v3.4.0 — اترفض من الاستعلام ولا اتوقف وقت الكتابة)
@@ -1323,9 +1327,30 @@ async function handleUpdate(request, env) {
     try {
       batchResult = await metafieldsSetBatch(env, token, toWrite);
     } catch (err) {
+      // نفس القاعدة: الدفعة اتبعتت لشوبيفاي فعلاً، فالفشل لازم يسيب أثر.
       for (const w of toWrite) {
         const meta = perOrderMeta[`${w.ownerId}::${w.key}`];
-        results.push({ orderName: meta.orderName, success: false, status: 'error', actions: [], error: `Shopify error: ${err.message}` });
+        const failMsg = `Shopify error: ${err.message}`;
+        let failLogged = true, failLogError = null;
+        try {
+          await writeLog(env.DB, {
+            tool: 'metafields_change', type: 'update', employee: employee || null,
+            orderId: meta.orderId, orderName: meta.orderName,
+            valueBefore: meta.valueBefore, valueAfter: null,
+            notes: `فشل: ${failMsg}`,
+            extra: {
+              sourceTool: SOURCE_TOOL, workerVersion: WORKER_VERSION,
+              trackingNumber: meta.trackingNumber, orderType: meta.orderType,
+              machine: meta.machine, field: meta.field,
+              actions: [], error: failMsg, result: 'error',
+            },
+          });
+        } catch (e) { failLogged = false; failLogError = e.message; }
+        results.push({
+          orderName: meta.orderName, success: false, status: 'error', actions: [],
+          orderId: meta.orderId, error: failMsg,
+          logged: failLogged, logError: failLogError,
+        });
       }
       batchResult = null;
     }
@@ -1338,10 +1363,44 @@ async function handleUpdate(request, env) {
 
         if (!successSet.has(metaKey)) {
           // الخطأ منسوب **للصف ده** (errorByKey) مش أول رسالة في الدفعة كلها
+          const failMsg = errorByKey[metaKey] || 'فشل تحديث الميتافيلد';
+
+          // ⚠️ v3.4.0 — المسار ده كان **الوحيد اللي بيسيب صفر أثر في D1** على
+          // أوردر وصل لشوبيفاي فعلاً: الميوتيشن اتبعتت، شوبيفاي رفضت، والصف
+          // كان بيرجع للواجهة وبس. يعني سؤال "الأداة حاولت تكتب الأوردر ده
+          // وفشلت؟" ماكانش ليه إجابة بعد ما الشاشة تتقفل — بينما الحالة الأقل
+          // أهمية (اتوقف **قبل** أي محاولة) بقى ليها أثر. بيتسجّل تحت
+          // `type='update'` مش `rejected` لأن **المحاولة حصلت فعلاً**.
+          let failLogged = true, failLogError = null;
+          try {
+            await writeLog(env.DB, {
+              tool:        'metafields_change',
+              type:        'update',
+              employee:    employee || null,
+              orderId:     meta.orderId,
+              orderName:   meta.orderName,
+              valueBefore: meta.valueBefore,
+              valueAfter:  null,             // ⚠️ مفيش قيمة اتكتبت — المحاولة اترفضت
+              notes:       `فشل: ${failMsg}`,
+              extra: {
+                sourceTool:     SOURCE_TOOL,
+                workerVersion:  WORKER_VERSION,
+                trackingNumber: meta.trackingNumber,
+                orderType:      meta.orderType,
+                machine:        meta.machine,
+                field:          meta.field,
+                actions:        [],
+                error:          failMsg,
+                result:         'error',
+              },
+            });
+          } catch (e) { failLogged = false; failLogError = e.message; }
+
           results.push({
             orderName: meta.orderName, success: false, status: 'error', actions: [],
             orderId: meta.orderId,
-            error: errorByKey[metaKey] || 'فشل تحديث الميتافيلد',
+            error: failMsg,
+            logged: failLogged, logError: failLogError,
           });
           continue;
         }
@@ -1444,7 +1503,9 @@ async function handleUpdate(request, env) {
       already,
       // مرفوض **مش** فشل: مفيش كتابة اتحاولت أصلاً. عدّاد لوحده عشان ما يتلمّش
       // على `failed` في الملخّص اللي الموظف بيقراه.
-      rejected:       rejectedResults.filter(r => !r.becameValid).length,
+      // ⚠️ "مرفوض" **بيستثني** `already` — والعدّ ده لازم يفضل مطابق لأداة
+      //    المرتجعات، وإلا أي تقرير بيقرا الحقل من الأداتين بيجمع تفاحتين.
+      rejected:       rejectedResults.filter(r => !r.becameValid && !r.already).length,
       rejectedLogged: rejectedResults.filter(r => r.logged === true).length,
       becameValid:    rejectedResults.filter(r =>  r.becameValid).length,
       alreadyRejected: rejectedResults.filter(r => r.already).length,
