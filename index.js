@@ -3,8 +3,37 @@
 // Auth/D1 tool value : bosta_tracker | Types: login / logout  (unchanged — Universal D1 Auth)
 // Status-write log    : tool = metafields_change | type = update
 //                       (extra.sourceTool = "bosta_orders_shipped_scanner" — see §CONSTANTS)
+//                       extra.result = 'success' | 'warning' | 'error'
+//                       ⚠️ v3.4.0: `update` بقى معناه **"لمس شوبيفاي"** مش
+//                       "نجح" — محاولة كتابة شوبيفاي رفضتها بتتسجّل هنا بـ
+//                       result='error'. أي عدّ للنجاح لازم يفلتر على result.
 // Rejected log        : tool = metafields_change | type = rejected  (v3.3.0 — no Shopify write)
+//                       extra.result = 'rejected' | 'already'  (v3.4.0 — "خلاص اتعمل" حالة مستقلة)
+//                       extra.stage  = 'lookup' | 'write'      (v3.4.0 — اترفض من الاستعلام ولا اتوقف وقت الكتابة)
 //
+// v3.4.0 — مراجعة شاملة (07-09-2026). ستة بنود، كلهم من عيلة "الفشل الصامت":
+//   ① §SHOPIFY::fetchShopifyOrdersByNames كانت **مش بتتأكد إن الأوردر الراجع
+//      من البحث هو المطلوب**، وكانت بتنضّف الاسم بصمت (`replace(/[^a-zA-Z0-9-]/g,'')`)
+//      وتحفظ النتيجة تحت الاسم **الأصلي**. يعني اسم فيه أي حرف غير مسموح كان
+//      بيتحوّل لبحث باسم تاني والنتيجة تترد كأنها بتاعت الأول — كتابة Shipped
+//      وفلفلمنت على **أوردر غلط**. أداة المرتجعات عندها الحارسين من v3.2.0،
+//      والأداة دي ماكانش عندها ولا واحد.
+//   ② حارس تكرار الأوردر في الدفعة (`seenOrders`) — رقمين تتبع لنفس الأوردر
+//      (شحن + إعادة شحن) كانوا هيدّوا: مدخلين متطابقين في نفس الـ chunk ·
+//      `perOrderMeta` بيتكتب فوق نفسه (رقم التتبع الأول بيضيع) · **صفّين في D1
+//      لكتابة واحدة** (بيضخّم خط الأساس) · **`fulfillmentCreate` مرتين**
+//      فالتانية بتفشل وتطلّع **تحذير أصفر كاذب** على أوردر تمام.
+//   ③ الصف اللي بيفشل في التحقق **وقت الكتابة** (سباق بين موظفين) كان بيرجع
+//      للواجهة و**مايسيبش أي أثر في D1** — وهي بالظبط الحالة اللي محتاجة أثر.
+//      دلوقتي بيتسجّل بـ `type='rejected'` و`extra.stage='write'`.
+//   ④ حالة **"خلاص اتعمل"** بقت مستقلة (`already`): "S1 ليس Ready (الحالي:
+//      Shipped)" كانت ٦ من ٧ صفوف الرفض المسجّلة — والمعنى الحقيقي جملة واحدة
+//      ("الأوردر ده اتشحن خلاص"). رسالة تقنية بلون رفض على أكتر حالة متكررة
+//      بتخلي الموظف يبطّل يقرا الرفض أصلاً.
+//   ⑤ حراسة `parseInt` في `get_logs` (كانت `NaN` بتوصل لـ D1) + سقف على حجم
+//      الدفعة + ترتيب server-side بقائمة بيضاء.
+//   ⑥ فلاتر السجل بقت تقبل `results[]` و`machines[]` — "وريني كل اللي فيه
+//      تحذير" (أي فلفلمنت فشل) ماكانش ليها طريقة في الأداة دي أصلاً.
 // v3.1.0 — إضافة Fulfill تلقائي بعد كتابة Shipped (S1 أو S2):
 //   بعد نجاح metafieldsSet لأي أوردر، لو عنده fulfillmentOrders بحالة OPEN
 //   بيتعمل عليهم fulfillmentCreate في نفس الخطوة (نفس الـ pattern المعتمد في
@@ -61,23 +90,32 @@
 //   ?action=update           POST  — إعادة تحقق من الحالة وقت الكتابة + metafieldsSet
 //                                    + fulfillmentCreate (لو فيه OPEN fulfillmentOrders) + D1 log
 //                                    + rejected[] → D1 log بـ type='rejected' من غير أي كتابة
-//   ?action=get_logs         GET  — server-side filters (employees/types/search/dateFrom/dateTo) + pagination
+//   ?action=get_logs         GET  — server-side filters (employees/types/results/machines/search/dateFrom/dateTo)
+//                                    + pagination + ترتيب server-side (sortBy/sortDir بقائمة بيضاء)
 //   ?action=get_logs_count   GET  — total count matching the same filters
 //   ?action=get_logs_export  GET  — full export up to LOG_EXPORT_MAX + { cap, total, truncated }
 //   ?action=diag             GET  — فحص ذاتي بدون أي كتابة (أسماء وأطوال المتغيرات — مفيش قيم أسرار)
 //   ?action=get_config       GET  — WORKER_VERSION عشان الواجهة تكشف Promote ناقص
 //
-// skills: worker-builder v2.0.0 · constants v1.4.3 · order-lifecycle v1.2.0 ·
-//         shopify-graphql-helper v1.0.0 · bosta-api-helper (بلا إصدار) — 03-09-2026
+// skills: worker-builder v2.1.0 · constants v1.10.0 · order-lifecycle v1.2.0 ·
+//         shopify-graphql-helper v1.0.0 · bosta-api-helper (بلا إصدار) — 07-09-2026
 
 // ══════════════════════════════════════════════════════════════
 // §CONSTANTS
 // ══════════════════════════════════════════════════════════════
-const WORKER_VERSION = '3.3.0';                             // ?action=get_config — الواجهة بتقارنه بـ MIN_WORKER_VERSION
+const WORKER_VERSION = '3.4.0';                             // ?action=get_config — الواجهة بتقارنه بـ MIN_WORKER_VERSION
 const TOOL_NAME      = 'bosta_tracker';                    // login/logout D1 logging only
 const SOURCE_TOOL     = 'bosta_orders_shipped_scanner';     // tag used in extra.sourceTool for status-write logs
 const SOURCE_TOOL_LIKE = `%"sourceTool":"${SOURCE_TOOL}"%`;
 const BOSTA_API_BASE = 'https://app.bosta.co/api/v2';
+
+// ─── §CONSTANTS::MAX_BATCH ───
+// أكبر دفعة فعلية مقيسة من D1 = ٨٢ أوردر في نافذة عشر ثواني (01-09-2026).
+// السقف هنا مش تقييد للاستخدام العادي — هو حارس ضد لصق قايمة ضخمة بالغلط:
+// كل أوردر بياخد نداء fulfillmentCreate مستقل، فدفعة بـ ٥٠٠ رقم بتتحول لطلب
+// Worker بمئات النداءات المتتابعة والمتصفح بيقطع الاتصال في النص — وساعتها
+// الكتابة تكون حصلت والواجهة مش عارفة. الواجهة بتقسّم على ١٥ أصلاً (v3.5).
+const MAX_BATCH = 200;
 
 // §CONSTANTS::status — verbatim strings from ecommoda-order-lifecycle (casing is load-bearing)
 const S1_STATUS = {
@@ -232,6 +270,7 @@ function buildLogFilterSQL(select, {
   tool      = null,
   employee  = null, employees = null,
   type      = null, types     = null,
+  results   = null, machines  = null,
   search    = null,
   dateFrom  = null, dateTo    = null,
 } = {}) {
@@ -247,6 +286,18 @@ function buildLogFilterSQL(select, {
   }
   if (typs.length) {
     sql += ` AND type IN (${typs.map(() => '?').join(',')})`; b.push(...typs);
+  }
+  // ⚠️ v3.4.0 — `results` و`machines` بيتفلتروا على `extra` JSON. الفلترين دول
+  // مش رفاهية: "وريني كل اللي فيه تحذير" = "أنهي أوردرات فلفلمنتها فشل"، وهو
+  // أهم سؤال تشغيلي في الأداة دي وماكانش ليه أي طريقة قبل كده. (أداة المرتجعات
+  // عندها الاتنين من v3.3.0 — ده تسوية فرق بين شقيقتين مش ميزة جديدة.)
+  if (Array.isArray(results) && results.length) {
+    sql += ` AND (${results.map(() => 'extra LIKE ?').join(' OR ')})`;
+    b.push(...results.map(v => `%"result":"${v}"%`));
+  }
+  if (Array.isArray(machines) && machines.length) {
+    sql += ` AND (${machines.map(() => 'extra LIKE ?').join(' OR ')})`;
+    b.push(...machines.map(v => `%"machine":"${v}"%`));
   }
   if (search) {
     sql += ' AND (order_name LIKE ? OR notes LIKE ?)';
@@ -267,16 +318,50 @@ function logParamsFrom(url, tool) {
   const csv = (k) => (url.searchParams.get(k) || '')
     .split(',').map(s => s.trim()).filter(Boolean);
   const employees = csv('employees'), types = csv('types');
+  const results   = csv('results'),   machines = csv('machines');
   return {
     tool,
     employees: employees.length ? employees : null,
     employee:  url.searchParams.get('employee') || null,
     types:     types.length ? types : null,
     type:      url.searchParams.get('type')     || null,
+    results:   results.length  ? results  : null,
+    machines:  machines.length ? machines : null,
     search:    url.searchParams.get('search')   || null,
     dateFrom:  url.searchParams.get('dateFrom') || null,
     dateTo:    url.searchParams.get('dateTo')   || null,
   };
+}
+
+// ─── §LOG-ENDPOINTS::orderByClause ───
+// ⚠️ v3.4.0 — الترتيب بقى server-side بقائمة بيضاء مقفولة.
+// قبل كده الواجهة كانت بترتّب `logRows` (١٠٠ صف الصفحة الحالية) بينما الـ
+// pagination بترتيب `timestamp DESC` من السيرفر — يعني "رتّب بالموظف" على سجل
+// فيه ١٢١٧ صف كان بيرتّب ١٠٠ ويسيب ١١١٧، والسهم في الترويسة شكله ترتيب عام.
+// ⚠️ القايمة **مقفولة** — القيمة جاية من العميل وبتتلزق في نص SQL مباشرةً
+// (ORDER BY مابيقبلش bind). أي قيمة بره القايمة بترجع للافتراضي بدون خطأ.
+// ⚠️ المفاتيح هنا **لازم تطابق `data-sort-key` في الواجهة حرفيًا** — مفتاح
+// مش في القايمة بيرجع للافتراضي (timestamp) في صمت، فالعمود يبان إنه اترتّب
+// وهو مااترتّبش. أي عمود جديد في الجدول يتضاف هنا في نفس التسليم.
+const LOG_SORT_COLUMNS = {
+  date:      'timestamp',
+  time:      'timestamp',
+  employee:  'employee',
+  orderName: 'order_name',
+  machine:   `json_extract(extra, '$.machine')`,
+  result:    `json_extract(extra, '$.result')`,
+  tn:        `json_extract(extra, '$.trackingNumber')`,
+  orderType: `json_extract(extra, '$.orderType')`,
+};
+
+function orderByClause(sortBy, sortDir) {
+  const col = LOG_SORT_COLUMNS[String(sortBy || '')] || 'timestamp';
+  const dir = String(sortDir || '').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  // timestamp دايمًا كسر تعادل ثانوي — من غيره صفوف نفس الموظف بترتيب عشوائي
+  // بين الصفحات، والصف الواحد ممكن يظهر في صفحتين أو ما يظهرش خالص.
+  return col === 'timestamp'
+    ? ` ORDER BY timestamp ${dir}`
+    : ` ORDER BY ${col} ${dir}, timestamp DESC`;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -310,14 +395,14 @@ function buildScopedLogSQL(select, filters = {}) {
   return { sql: `${sql} AND ${LOG_SCOPE_SQL}`, b: [...b, SOURCE_TOOL_LIKE] };
 }
 
-async function getScopedLogs(db, { limit = 100, offset = 0, ...filters } = {}) {
+async function getScopedLogs(db, { limit = 100, offset = 0, sortBy = null, sortDir = null, ...filters } = {}) {
   const { sql, b } = buildScopedLogSQL('SELECT *', filters);
-  const q = sql + ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+  const q = sql + orderByClause(sortBy, sortDir) + ' LIMIT ? OFFSET ?';
   return (await db.prepare(q)
     .bind(...b, Math.min(limit, 100), Math.max(offset, 0)).all()).results;
 }
 
-async function getLogsCount(db, filters = {}) {
+async function getLogsCount(db, { sortBy, sortDir, ...filters } = {}) {
   const { sql, b } = buildScopedLogSQL('SELECT COUNT(*) as total', filters);
   const row = await db.prepare(sql).bind(...b).first();
   return row?.total ?? 0;
@@ -325,7 +410,7 @@ async function getLogsCount(db, filters = {}) {
 
 // ⚠️ بتقص عند LOG_EXPORT_MAX في السكوت — فالـ endpoint إلزامي يرجّع
 // cap/total/truncated معاها، وإلا التصدير المقصوص بيوصل بعلامة ✓ خضرا.
-async function getLogsExport(db, filters = {}) {
+async function getLogsExport(db, { sortBy, sortDir, ...filters } = {}) {
   const { sql, b } = buildScopedLogSQL('SELECT *', filters);
   const q = sql + ' ORDER BY timestamp DESC LIMIT ?';
   return (await db.prepare(q).bind(...b, LOG_EXPORT_MAX).all()).results;
@@ -513,6 +598,24 @@ async function shopifyGQL(env, token, query, variables = {}, opName = 'shopify')
 // order right after writing Shipped (see §SHOPIFY::createFulfillment). Fetched
 // here too (not just in handleUpdate) because handleUpdate re-fetches fresh
 // state via this same function right before writing — no separate query needed.
+//
+// ⚠️ v3.4.0 — حارسان كانوا ناقصين هنا وموجودين في أداة المرتجعات من v3.2.0:
+//
+//   ① **التنظيف الصامت.** النسخة القديمة كانت بتعمل
+//      `const safe = name.replace(/[^a-zA-Z0-9-]/g, '')` وتدوّر بـ `safe`،
+//      وتحفظ النتيجة تحت **`name` الأصلي**. يعني اسم فيه أي حرف غير مسموح
+//      (مسافة · نقطة · شرطة سفلية · حرف عربي) كان بيتحوّل لبحث **باسم تاني**
+//      والنتيجة تترد كأنها بتاعته. الاسم غير الصالح دلوقتي **بيترفض صراحةً**
+//      (`map[name] = null` → "الأوردر غير موجود على شوبيفاي") بدل ما يتحوّل.
+//
+//   ② **مطابقة الاسم الراجع.** `orders(first: 1, query: "name:#X")` بحث،
+//      مش قراءة بالمفتاح — وممكن يرجّع أوردر **مقارب** مش مطابق. من غير
+//      المقارنة دي الأداة بتكتب `Shipped` **وتعمل fulfillment** على أوردر
+//      تاني، وتسجّله في D1 باسم الأوردر الصح. ده أخطر فشل ممكن في الأداة.
+//
+// ⚠️ الحارسين دول **مايتشالوش كـ"تبسيط"** — البيانات الحالية كلها أرقام صافية
+// فمفيش أثر ظاهر دلوقتي، وده حظ في البيانات مش أمان في الكود.
+//
 // Returns { [cleanOrderName]: { orderId, orderGid, orderName, s1, s2, fulfillmentOrders } | null }
 async function fetchShopifyOrdersByNames(env, token, orderNames) {
   const clean = [...new Set(
@@ -525,9 +628,15 @@ async function fetchShopifyOrdersByNames(env, token, orderNames) {
 
   for (let i = 0; i < clean.length; i += CHUNK) {
     const chunk = clean.slice(i, i + CHUNK);
-    const aliasBlocks = chunk.map((name, idx) => {
-      const safe = name.replace(/[^a-zA-Z0-9\-]/g, ''); // sanitize before string-interpolating into query
-      return `o${idx}: orders(first: 1, query: "name:#${safe}") {
+
+    // ① اسم غير صالح = مش هنبحث باسم مختلف. بيترفض هنا صراحةً.
+    const usable = chunk.filter(name => {
+      if (name.replace(/[^a-zA-Z0-9\-]/g, '') !== name) { map[name] = null; return false; }
+      return true;
+    });
+    if (!usable.length) continue;
+
+    const aliasBlocks = usable.map((name, idx) => `o${idx}: orders(first: 1, query: "name:#${name}") {
         edges { node {
           id
           legacyResourceId
@@ -536,22 +645,23 @@ async function fetchShopifyOrdersByNames(env, token, orderNames) {
           s2: metafield(namespace: "custom", key: "status_2_r_e") { value }
           fulfillmentOrders(first: 20) { nodes { id status } }
         } }
-      }`;
-    }).join('\n');
+      }`).join('\n');
 
     const resp = await shopifyGQL(env, token, `query { ${aliasBlocks} }`, {}, 'ordersByName');
-    const data = resp.data;
+    const data = resp.data || {};
 
-    chunk.forEach((name, idx) => {
+    usable.forEach((name, idx) => {
       const node = data[`o${idx}`]?.edges?.[0]?.node || null;
-      map[name] = node ? {
+      // ② مطابقة تامة بعد التنظيف — أي اختلاف = "غير موجود"، مش كتابة على غيره
+      if (!node || cleanOrderName(node.name) !== name) { map[name] = null; return; }
+      map[name] = {
         orderId:   node.legacyResourceId, // numeric — required for orderLink() on frontend
         orderGid:  node.id,
         orderName: node.name,
         s1:        node.s1?.value || null,
         s2:        node.s2?.value || null,
         fulfillmentOrders: (node.fulfillmentOrders?.nodes || []),
-      } : null;
+      };
     });
   }
 
@@ -564,18 +674,38 @@ async function fetchShopifyOrdersByNames(env, token, orderNames) {
 //   Bosta orderType = anything else → requires S1 = Delivered AND S2 = Ready
 //                                    → writes S2 = Shipped
 // Any other current state is rejected — never written silently (order-lifecycle Rule 10).
+//
+// ⚠️ v3.4.0 — **"خلاص اتعمل" حالة مستقلة (`already`)، مش رفض عادي.**
+// الدليل من D1: ٦ من ٧ صفوف الرفض المسجّلة كانت "S1 ليس Ready (الحالي:
+// Shipped)" — يعني أوردر **اتشحن خلاص** واتسكن تاني. المعنى الحقيقي جملة
+// واحدة، والأداة كانت بتقوله بلغة مهندسين وبلون رفض. النتيجة إن أكتر رسالة
+// بتظهر للموظف هي أقلها إفادة، فبيتعوّد يعدّي على الرفض كله.
+// الحالة دي **مش فشل ومش نجاح** — هي "مفيش حاجة مطلوبة"، وبتاخد لون محايد
+// وعدّاد مستقل في الملخّص. (نفس القاعدة في أداة المرتجعات — الحالة هناك كانت
+// ٥٩ من ٦١ صف فشل.)
 function validateTransition(orderType, sOrder) {
   const isSend = String(orderType || '').trim().toLowerCase() === 'send';
 
+  // ⚠️ فحص الصلاحية **قبل** فحص "خلاص اتعمل" في المسارين. النهاردة مفيش تعارض
+  //    (الصلاحية بتطلب Ready والـ already بيتحقق على Shipped)، بس لو حد وسّع
+  //    القاعدة بعدين، **الصلاحية لازم تغلب** بدل ما تتحجب في صمت.
   if (isSend) {
     if (sOrder.s1 === S1_STATUS.READY) {
       return { valid: true, machine: 'S1', targetField: 'custom.manual_status', targetValue: S1_STATUS.SHIPPED };
+    }
+    if (sOrder.s1 === S1_STATUS.SHIPPED) {
+      return { valid: false, already: true, machine: 'S1',
+               reason: 'الأوردر ده اتشحن خلاص قبل كده (S1 = Shipped) — مفيش حاجة مطلوبة' };
     }
     return { valid: false, reason: `S1 ليس Ready (الحالي: ${sOrder.s1 || '—'})` };
   }
 
   if (sOrder.s1 === S1_STATUS.DELIVERED && sOrder.s2 === S2_STATUS.READY) {
     return { valid: true, machine: 'S2', targetField: 'custom.status_2_r_e', targetValue: S2_STATUS.SHIPPED };
+  }
+  if (sOrder.s2 === S2_STATUS.SHIPPED) {
+    return { valid: false, already: true, machine: 'S2',
+             reason: 'الشحنة دي اترفعت خلاص قبل كده ([S-2] = Shipped) — مفيش حاجة مطلوبة' };
   }
   if (sOrder.s1 !== S1_STATUS.DELIVERED) {
     return { valid: false, reason: `S1 ليس Delivered (الحالي: ${sOrder.s1 || '—'})` };
@@ -795,10 +925,19 @@ export default {
       // بيفلتر بشكل مختلف عن اللي جنبه هو بالظبط اللي بيخلي التصدير ينزّل
       // غير المعروض على الشاشة.
       if (action === 'get_logs') {
-        const p      = logParamsFrom(url, null);
-        const limit  = Math.min(parseInt(url.searchParams.get('limit')  || '100'), 100);
-        const offset = Math.max(parseInt(url.searchParams.get('offset') || '0'),    0);
-        const entries = await getScopedLogs(env.DB, { ...p, limit, offset });
+        const p = logParamsFrom(url, null);
+        // ⚠️ v3.4.0 — حراسة الأرقام: `parseInt('abc')` بيدّي NaN، و`Math.min(NaN,100)`
+        // بيفضل NaN، وبيوصل لـ D1 كـ bind فيرجّع خطأ غامض. (أداة المرتجعات
+        // أصلحتها في v3.2.0 — ده تسوية فرق بين شقيقتين.)
+        const limitRaw  = parseInt(url.searchParams.get('limit')  || '100', 10);
+        const offsetRaw = parseInt(url.searchParams.get('offset') || '0',   10);
+        const limit  = Number.isFinite(limitRaw)  ? Math.min(Math.max(limitRaw, 1), 100) : 100;
+        const offset = Number.isFinite(offsetRaw) ? Math.max(offsetRaw, 0) : 0;
+        const entries = await getScopedLogs(env.DB, {
+          ...p, limit, offset,
+          sortBy:  url.searchParams.get('sortBy')  || null,
+          sortDir: url.searchParams.get('sortDir') || null,
+        });
         return json({ ok: true, entries }, 200, request);
       }
 
@@ -896,6 +1035,20 @@ async function handleDiag(request, env) {
       add('شوبيفاي — الصلاحيات', missing.length === 0,
           missing.length ? `ناقص: ${missing.join('، ')}` : `${scopes.length} صلاحية — الكتابة والفلفلمنت متاحين`,
           missing.length ? 'ضِف الصلاحيات دي للتطبيق في شوبيفاي وأعد التثبيت' : null);
+
+      // ⚠️ v3.4.0 — `read_all_orders` **مش** ضمن المطلوب فوق، لكن غيابها بيدّي
+      // فشل صامت من نوع خاص: شوبيفاي بتخفي الأوردرات الأقدم من ٦٠ يوم عن أي
+      // تطبيق مالوش الصلاحية دي، فالبحث بيرجّع **صفر نتيجة** والأداة بتقول
+      // "الأوردر غير موجود على شوبيفاي" — وهي رسالة كاذبة تمامًا. الأوردرات
+      // الحالية أحدث من ٣٠ يوم فالحالة ماظهرتش، بس الفحص هنا بيجاوب السؤال
+      // قبل ما يتحوّل لعطل (شحنة بتترجع بعد شهرين مثلاً).
+      add('شوبيفاي — read_all_orders (أوردرات أقدم من ٦٠ يوم)',
+          scopes.includes('read_all_orders'),
+          scopes.includes('read_all_orders')
+            ? 'موجودة — الأوردرات القديمة تقدر تتقري'
+            : 'مش موجودة — أي أوردر أقدم من ٦٠ يوم هيبان "غير موجود على شوبيفاي"',
+          scopes.includes('read_all_orders') ? null
+            : 'مش عطل حالي (الأوردرات المستخدمة أحدث من كده) — بس لو ظهرت شحنة قديمة بتترفض بـ"غير موجود"، السبب هنا');
     } catch (e) {
       add('شوبيفاي — الصلاحيات', false, e.message);
     }
@@ -934,6 +1087,8 @@ async function handleLookup(request, env) {
   const { trackingNumbers } = body;
   if (!Array.isArray(trackingNumbers) || trackingNumbers.length === 0)
     return json({ error: 'trackingNumbers[] مطلوب' }, 400, request);
+  if (trackingNumbers.length > MAX_BATCH)
+    return json({ error: `الدفعة أكبر من الحد (${trackingNumbers.length} من ${MAX_BATCH}) — قسّمها على دفعات` }, 400, request);
 
   assertEnv(env, 'shopify', 'bosta');
 
@@ -1000,21 +1155,21 @@ async function handleLookup(request, env) {
   const results = bostaResults.map(r => {
     if (!r.found) {
       return {
-        ...r, orderId: null, s1: null, s2: null, valid: false,
+        ...r, orderId: null, s1: null, s2: null, valid: false, already: false,
         rejectReason: r.bostaFailed ? 'تعذّر الاستعلام من بوسطة — الشحنة غير مؤكَّدة' : null,
         targetField: null, targetValue: null, machine: null,
       };
     }
 
     if (shopifyError) {
-      return { ...r, orderId: null, s1: null, s2: null, valid: false, rejectReason: `تعذر الاتصال بشوبيفاي: ${shopifyError}`, targetField: null, targetValue: null, machine: null };
+      return { ...r, orderId: null, s1: null, s2: null, valid: false, already: false, rejectReason: `تعذر الاتصال بشوبيفاي: ${shopifyError}`, targetField: null, targetValue: null, machine: null };
     }
 
     // ⚠️ مفتاح الماب منظّف (بدون '#') — و r.businessRef جاي من بوسطة بالـ '#'.
     // لازم cleanOrderName() هنا وإلا كل أوردر هيترفض بـ "غير موجود على شوبيفاي".
     const sOrder = shopifyMap[cleanOrderName(r.businessRef)];
     if (!sOrder) {
-      return { ...r, orderId: null, s1: null, s2: null, valid: false, rejectReason: 'الأوردر غير موجود على شوبيفاي', targetField: null, targetValue: null, machine: null };
+      return { ...r, orderId: null, s1: null, s2: null, valid: false, already: false, rejectReason: 'الأوردر غير موجود على شوبيفاي (أو الاسم الراجع من البحث مش مطابق)', targetField: null, targetValue: null, machine: null };
     }
 
     const v = validateTransition(r.orderType, sOrder);
@@ -1024,10 +1179,14 @@ async function handleLookup(request, env) {
       s1:           sOrder.s1,
       s2:           sOrder.s2,
       valid:        v.valid,
+      // ⚠️ `already` بترجع للواجهة عشان تعرضه بلون محايد وعدّاد مستقل —
+      // مش أحمر وسط المرفوض. الفرق بين "ممنوع" و"مفيش حاجة مطلوبة" هو الفرق
+      // بين موظف بيقرا الرفض وموظف بيعدّي عليه.
+      already:      !!v.already,
       rejectReason: v.valid ? null : v.reason,
       targetField:  v.valid ? v.targetField : null,
       targetValue:  v.valid ? v.targetValue : null,
-      machine:      v.valid ? v.machine : null,
+      machine:      v.valid ? v.machine : (v.machine || null),
     };
   });
 
@@ -1057,6 +1216,8 @@ async function handleUpdate(request, env) {
   // بقى "واحدة من الاتنين على الأقل" مش "items إجباري".
   if (!items.length && !rejected.length)
     return json({ error: 'items[] أو rejected[] مطلوب' }, 400, request);
+  if (items.length + rejected.length > MAX_BATCH)
+    return json({ error: `الدفعة أكبر من الحد (${items.length + rejected.length} من ${MAX_BATCH}) — قسّمها على دفعات` }, 400, request);
 
   assertEnv(env, 'shopify');
 
@@ -1078,23 +1239,56 @@ async function handleUpdate(request, env) {
   const toWrite        = []; // metafieldsSet inputs
   const perOrderMeta   = {}; // `${ownerId}::${key}` -> context needed for D1 log + result row
 
+  // ⚠️ v3.4.0 — حارس التكرار. `freshMap` بتتقري **مرة واحدة قبل الحلقة**، فلو
+  // رقمين تتبع بيرجعوا لنفس الأوردر (شحن + إعادة شحن بعد مرتجع — وارد فعليًا)،
+  // الأوردر كان بياخد: مدخلين متطابقين في نفس الـ metafieldsSet chunk ·
+  // `perOrderMeta` بيتكتب فوق نفسه فرقم التتبع الأول بيضيع من السجل ·
+  // **صفّين في D1 لكتابة واحدة** (بيضخّم خط الأساس اللي CLAUDE.md بتعدّه) ·
+  // و**`fulfillmentCreate` مرتين** فالتانية بتفشل وتطلّع تحذير أصفر كاذب.
+  // (أداة المرتجعات ضافت نفس الحارس في v3.3.0 بعد ما الحالة حصلت فعلاً هناك.)
+  const seenOrders = new Set();
+
+  // ⚠️ v3.4.0 — الصف اللي بيخرج من الحلقة دي **قبل الكتابة** كان بيرجع للواجهة
+  // ومايسيبش أي أثر في D1 — وهي بالظبط الحالة اللي محتاجة أثر (سباق بين
+  // موظفين: أوردر كان متوافق وقت الاستعلام واتحرّك قبل الضغط). بيتجمّع هنا
+  // وبيتسجّل تحت `type='rejected'` بـ `extra.stage='write'`.
+  const writeBlocked = [];
+
   for (const item of items) {
     const cleanName = cleanOrderName(item.orderName);
 
     if (!cleanName) {
-      results.push({ orderName: item.orderName, success: false, status: 'error', actions: [], error: 'Missing orderName' });
+      results.push({ orderName: item.orderName, success: false, status: 'error', actions: [], error: 'اسم الأوردر ناقص' });
       continue;
     }
+
+    if (seenOrders.has(cleanName)) {
+      results.push({
+        orderName: `#${cleanName}`, success: false, status: 'error', actions: [],
+        error: 'الأوردر ده اتنفّذ فعلاً في نفس الدفعة (رقم تتبع تاني لنفس الأوردر) — اتخطّيناه عشان مايتكتبش مرتين',
+      });
+      continue;
+    }
+    seenOrders.add(cleanName);
 
     const sOrder = freshMap[cleanName];
     if (!sOrder) {
       results.push({ orderName: item.orderName, success: false, status: 'error', actions: [], error: 'الأوردر غير موجود على شوبيفاي' });
+      writeBlocked.push({ ...item, _stage: 'write' });
       continue;
     }
 
     const v = validateTransition(item.orderType, sOrder);
     if (!v.valid) {
-      results.push({ orderName: item.orderName, success: false, status: 'error', actions: [], error: `الحالة تغيرت قبل التحديث — ${v.reason}` });
+      results.push({
+        orderName: `#${cleanName}`, success: false,
+        // ⚠️ "خلاص اتعمل" مش فشل — بياخد حالته المستقلة عشان مايتعدّش في
+        //    `failed` ومايتلوّنش أحمر في الجدول ولا في الملخّص.
+        status: v.already ? 'already' : 'error',
+        already: !!v.already, actions: [], orderId: sOrder.orderId,
+        error: v.already ? v.reason : `الحالة تغيرت قبل التحديث — ${v.reason}`,
+      });
+      writeBlocked.push({ ...item, _stage: 'write' });
       continue;
     }
 
@@ -1133,9 +1327,30 @@ async function handleUpdate(request, env) {
     try {
       batchResult = await metafieldsSetBatch(env, token, toWrite);
     } catch (err) {
+      // نفس القاعدة: الدفعة اتبعتت لشوبيفاي فعلاً، فالفشل لازم يسيب أثر.
       for (const w of toWrite) {
         const meta = perOrderMeta[`${w.ownerId}::${w.key}`];
-        results.push({ orderName: meta.orderName, success: false, status: 'error', actions: [], error: `Shopify error: ${err.message}` });
+        const failMsg = `Shopify error: ${err.message}`;
+        let failLogged = true, failLogError = null;
+        try {
+          await writeLog(env.DB, {
+            tool: 'metafields_change', type: 'update', employee: employee || null,
+            orderId: meta.orderId, orderName: meta.orderName,
+            valueBefore: meta.valueBefore, valueAfter: null,
+            notes: `فشل: ${failMsg}`,
+            extra: {
+              sourceTool: SOURCE_TOOL, workerVersion: WORKER_VERSION,
+              trackingNumber: meta.trackingNumber, orderType: meta.orderType,
+              machine: meta.machine, field: meta.field,
+              actions: [], error: failMsg, result: 'error',
+            },
+          });
+        } catch (e) { failLogged = false; failLogError = e.message; }
+        results.push({
+          orderName: meta.orderName, success: false, status: 'error', actions: [],
+          orderId: meta.orderId, error: failMsg,
+          logged: failLogged, logError: failLogError,
+        });
       }
       batchResult = null;
     }
@@ -1148,10 +1363,44 @@ async function handleUpdate(request, env) {
 
         if (!successSet.has(metaKey)) {
           // الخطأ منسوب **للصف ده** (errorByKey) مش أول رسالة في الدفعة كلها
+          const failMsg = errorByKey[metaKey] || 'فشل تحديث الميتافيلد';
+
+          // ⚠️ v3.4.0 — المسار ده كان **الوحيد اللي بيسيب صفر أثر في D1** على
+          // أوردر وصل لشوبيفاي فعلاً: الميوتيشن اتبعتت، شوبيفاي رفضت، والصف
+          // كان بيرجع للواجهة وبس. يعني سؤال "الأداة حاولت تكتب الأوردر ده
+          // وفشلت؟" ماكانش ليه إجابة بعد ما الشاشة تتقفل — بينما الحالة الأقل
+          // أهمية (اتوقف **قبل** أي محاولة) بقى ليها أثر. بيتسجّل تحت
+          // `type='update'` مش `rejected` لأن **المحاولة حصلت فعلاً**.
+          let failLogged = true, failLogError = null;
+          try {
+            await writeLog(env.DB, {
+              tool:        'metafields_change',
+              type:        'update',
+              employee:    employee || null,
+              orderId:     meta.orderId,
+              orderName:   meta.orderName,
+              valueBefore: meta.valueBefore,
+              valueAfter:  null,             // ⚠️ مفيش قيمة اتكتبت — المحاولة اترفضت
+              notes:       `فشل: ${failMsg}`,
+              extra: {
+                sourceTool:     SOURCE_TOOL,
+                workerVersion:  WORKER_VERSION,
+                trackingNumber: meta.trackingNumber,
+                orderType:      meta.orderType,
+                machine:        meta.machine,
+                field:          meta.field,
+                actions:        [],
+                error:          failMsg,
+                result:         'error',
+              },
+            });
+          } catch (e) { failLogged = false; failLogError = e.message; }
+
           results.push({
             orderName: meta.orderName, success: false, status: 'error', actions: [],
             orderId: meta.orderId,
-            error: errorByKey[metaKey] || 'فشل تحديث الميتافيلد',
+            error: failMsg,
+            logged: failLogged, logError: failLogError,
           });
           continue;
         }
@@ -1229,11 +1478,19 @@ async function handleUpdate(request, env) {
     }
   }
 
-  const rejectedResults = await logRejectedItems(env, employee, rejected, freshMap);
+  // ⚠️ المرفوض اللي الواجهة بعتته + الصفوف اللي اتوقفت وقت الكتابة، مع بعض.
+  // والأوردر اللي اتسجّل فعلاً في `items` (نجح أو فشل) مابيتسجّلش تاني هنا —
+  // من غير الشرط ده الأوردر اللي اتوقف وقت الكتابة كان هياخد صفّين في D1.
+  const rejectedInput = [
+    ...writeBlocked,
+    ...rejected.filter(it => !seenOrders.has(cleanOrderName(it.orderName))),
+  ];
+  const rejectedResults = await logRejectedItems(env, employee, rejectedInput, freshMap);
 
   const succeeded = results.filter(r => r.status === 'success').length;
   const warned    = results.filter(r => r.status === 'warning').length;
   const failed    = results.filter(r => r.status === 'error').length;
+  const already   = results.filter(r => r.status === 'already').length;
   return json({
     ok: true,
     results,
@@ -1241,11 +1498,17 @@ async function handleUpdate(request, env) {
     summary: {
       total:     items.length,
       succeeded, warned, failed,
+      // "خلاص اتعمل" عدّاد مستقل — لا نجاح ولا فشل. مفيش حاجة اتحاولت ومفيش
+      // حاجة كان المفروض تحصل.
+      already,
       // مرفوض **مش** فشل: مفيش كتابة اتحاولت أصلاً. عدّاد لوحده عشان ما يتلمّش
       // على `failed` في الملخّص اللي الموظف بيقراه.
-      rejected:       rejectedResults.filter(r => !r.becameValid).length,
+      // ⚠️ "مرفوض" **بيستثني** `already` — والعدّ ده لازم يفضل مطابق لأداة
+      //    المرتجعات، وإلا أي تقرير بيقرا الحقل من الأداتين بيجمع تفاحتين.
+      rejected:       rejectedResults.filter(r => !r.becameValid && !r.already).length,
       rejectedLogged: rejectedResults.filter(r => r.logged === true).length,
       becameValid:    rejectedResults.filter(r =>  r.becameValid).length,
+      alreadyRejected: rejectedResults.filter(r => r.already).length,
     },
   }, 200, request);
 }
@@ -1264,18 +1527,29 @@ async function handleUpdate(request, env) {
 // اللي جنبه (كتابة تمّت فعلاً على شوبيفاي) ماينفعش تتحوّل لـ 500 عشان سطر سجل.
 async function logRejectedItems(env, employee, rejectedItems, freshMap) {
   const out = [];
+  // ⚠️ نفس الأوردر ما يتسجّلش مرتين حتى لو اتبعت مرتين (رقمين تتبع لنفس
+  // الأوردر) — صف رفض مكرر في سجل دايم بيتحوّل بعدين لرقم غلط في أي تقرير.
+  const seen = new Set();
 
   for (const item of rejectedItems) {
     const cleanName = cleanOrderName(item.orderName);
+    if (cleanName) {
+      if (seen.has(cleanName)) continue;
+      seen.add(cleanName);
+    }
     const sOrder    = cleanName ? freshMap[cleanName] : null;
     const isSend    = String(item.orderType || '').trim().toLowerCase() === 'send';
     const machine   = isSend ? 'S1' : 'S2';
+    // 'lookup' = الواجهة بعتته كمرفوض من الاستعلام · 'write' = كان متوافق
+    // وقت الاستعلام واتوقف وقت الكتابة (سباق). الفرق ده هو كل قيمة الصف
+    // وقت التشخيص بعدين.
+    const stage     = item._stage === 'write' ? 'write' : 'lookup';
 
-    let reason, valueBefore = null, orderId = null, s1 = null, s2 = null;
+    let reason, valueBefore = null, orderId = null, s1 = null, s2 = null, already = false;
 
     if (!sOrder) {
       // مش على شوبيفاي دلوقتي — السبب ده حقيقة حالية، مش سبب منقول من الواجهة
-      reason = 'الأوردر غير موجود على شوبيفاي';
+      reason = cleanName ? 'الأوردر غير موجود على شوبيفاي' : 'اسم الأوردر ناقص';
     } else {
       orderId = sOrder.orderId; s1 = sOrder.s1; s2 = sOrder.s2;
       const v = validateTransition(item.orderType, sOrder);
@@ -1288,6 +1562,7 @@ async function logRejectedItems(env, employee, rejectedItems, freshMap) {
         continue;
       }
       reason      = v.reason;
+      already     = !!v.already;
       valueBefore = machine === 'S1' ? s1 : s2;
     }
 
@@ -1301,16 +1576,19 @@ async function logRejectedItems(env, employee, rejectedItems, freshMap) {
         orderName:   cleanName ? `#${cleanName}` : (item.orderName || null),
         valueBefore,
         valueAfter:  null,               // ⚠️ مفيش قيمة اتكتبت — ولا حتى محاولة
-        notes:       `مرفوض — ${reason}`,
+        notes:       already ? `خلاص اتعمل — ${reason}` : `مرفوض — ${reason}`,
         extra: {
           sourceTool:     SOURCE_TOOL,
+          workerVersion:  WORKER_VERSION,
           trackingNumber: String(item.trackingNumber || ''),
           orderType:      item.orderType || '',
           bostaState:     item.bostaState || null,
           machine,
           s1, s2,
           reason,
-          result:         'rejected',    // ← عمود "النتيجة" في تاب السجل بيقرا ده
+          stage,                          // lookup | write
+          already,                        // "خلاص اتعمل" — مش رفض حقيقي
+          result:         already ? 'already' : 'rejected',   // ← عمود "النتيجة" في تاب السجل بيقرا ده
         },
       });
     } catch (e) {
@@ -1320,7 +1598,7 @@ async function logRejectedItems(env, employee, rejectedItems, freshMap) {
     out.push({
       orderName: cleanName ? `#${cleanName}` : (item.orderName || ''),
       orderId, becameValid: false, logged, logError,
-      machine, s1, s2, reason,
+      machine, s1, s2, reason, stage, already,
       trackingNumber: String(item.trackingNumber || ''),
       orderType:      item.orderType || '',
     });

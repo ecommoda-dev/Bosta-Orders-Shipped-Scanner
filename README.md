@@ -2,7 +2,7 @@
 
 # Bosta Orders Shipped Scanner
 
-![version](https://img.shields.io/badge/version-v1.3.0-blue)
+![version](https://img.shields.io/badge/version-v1.4.0-blue)
 
 سكانر شحن الأوردرات من بوسطة — أداة مخزن داخلية لـ EcomModa.
 
@@ -47,6 +47,6 @@
 - بادج **⚠️ الـ Worker نسخة قديمة** في الهيدر بيظهر لو الـ Worker المنشور أقدم
   من `MIN_WORKER_VERSION` — معناه Promote ناقص أو rollback.
 
-آخر تحديث: 03-09-2026 — 21:30
+آخر تحديث: 07-09-2026 — 18:30
 
 </div>
