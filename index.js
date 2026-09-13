@@ -103,7 +103,7 @@
 // ══════════════════════════════════════════════════════════════
 // §CONSTANTS
 // ══════════════════════════════════════════════════════════════
-const WORKER_VERSION = '3.4.0';                             // ?action=get_config — الواجهة بتقارنه بـ MIN_WORKER_VERSION
+const WORKER_VERSION = '3.5.0';                             // ?action=get_config — الواجهة بتقارنه بـ MIN_WORKER_VERSION
 const TOOL_NAME      = 'bosta_tracker';                    // login/logout D1 logging only
 const SOURCE_TOOL     = 'bosta_orders_shipped_scanner';     // tag used in extra.sourceTool for status-write logs
 const SOURCE_TOOL_LIKE = `%"sourceTool":"${SOURCE_TOOL}"%`;
@@ -713,6 +713,197 @@ function validateTransition(orderType, sOrder) {
   return { valid: false, reason: `S2 ليس Ready (الحالي: ${sOrder.s2 || '—'})` };
 }
 
+// ══════════════════════════════════════════════════════════════
+// §READY-QUEUE — «جاهز لتسليم بوسطة» (v3.5.0 · قرار أحمد 13-09-2026)
+// ══════════════════════════════════════════════════════════════
+// طابور قراءة بحتة: الأوردرات اللي **الطرد بتاعها موجود فعلاً في المخزن
+// ومستني يتسلّم لبوسطة**. قراءة شوبيفاي بس — صفر كتابة، صفر نداء بوسطة،
+// صفر صف في D1.
+//
+// 🔴 **الشروط الأربعة — وكل واحد فيهم بيمنع رقم كذّاب:**
+//
+//   ① `custom.courier = 'Bosta'` — **مش `custom.zone`**. القرار ده مقصود
+//      ومقيس: `zone` بيقول «مين المفروض يشحنه» و`courier` بيقول «مين
+//      بيشحنه فعلاً»، وفيه **١٤٩ أوردر** على المتجر بـ`zone = Cairo+Giza`
+//      وبيروحوا مع بوسطة عادي (قياس حي 13-09-2026). الفلترة بالزون كانت
+//      هتسقّطهم من الطابور **في صمت** — والموظف واقف ماسك الطرد.
+//      ⚠️ النهاردة الحقلين متفقين على أوردرات `Ready` (٣٠ = ٣٠)، وده
+//      **صدفة في البيانات مش ضمانة في الحقل** — متبدّلش الشرط.
+//
+//   ② الحالة تسمح بالانتقال — نفس `validateTransition` بالحرف:
+//      `S1 = Ready` (الشحنة الأصلية) · أو `S1 = Delivered + S2 = Ready`
+//      (دورة استبدال/استرجاع). الصفّان في **نفس القايمة بلا علامة مميزة**
+//      (قرار أحمد) — الموظف بيسكن الملصق زي ما هو في الحالتين.
+//
+//   ③ **اتطبع واتغلّف** — الطرد لازم يكون موجود فعلاً. أوردر اتطبع ولسه
+//      ما اتغلّفش **لسه في طابور التغليف**، وعدّه هنا بيدّي وعد بطرد
+//      مش موجود على الرف.
+//
+//   ④ 🔴 **وقت التغليف بعد وقت الطباعة — مش قبله.** وقت الطباعة
+//      **بيتدهس** مع كل إعادة طباعة (§REPRINT في الطابعة)، يعني
+//      `printed > packed` معناها **إعادة طباعة بعد التغليف** = الأوردر
+//      اتعدّل، والفاتورة اللي جوّه الطرد لاغية، والطرد لازم **يتفتح
+//      ويتغلّف من أول**. تسليمه لبوسطة كده بيخرّج من المخزن طرد بمحتوى
+//      غلط، و**مفيش أي رسالة خطأ في المسار ده** — الشرط ده هو الحارس
+//      الوحيد عليه.
+//      ⚠️ التساوي بالثانية **مش استبعاد** — «بعد» و«قبل» بالمعنى الحرفي،
+//      والتساوي مش قبل.
+//
+// ⚠️ **الطابور مالوش أي أثر على `lookup`/`update`.** الموظف بيسكن زي ما
+//    هو بالظبط، والقايمة **عرض بحت** (قرار أحمد). يعني أوردر مش في
+//    الطابور لسه بيتسكن عادي والـ Worker هو اللي بيحكم عليه — الطابور
+//    **مش حارس** ومش مسموح يتحوّل لواحد.
+//
+// 🟡 **بند مفتوح مقصود — `custom.bosta_tracking_number`:** الحقل ده
+//    **بيتوقف** ومحلّه حقلان جداد (`..._s1` · `..._s2`) لسه فاضيين على
+//    كل الأوردرات (قياس 13-09-2026). الدالة بتقرا **التلاتة** وبتفضّل
+//    الجديد حسب المسار، وبترجع للقديم لو الجديد فاضي. ورقم التتبع
+//    **مش شرط أهلية دلوقتي** بقرار أحمد — بيتعرض بس. لما الحقلين
+//    الجديدين يتملّوا، يتحوّل لشرط في تمريرة منفصلة.
+const READY_QUEUE_PAGE      = 50;    // مقيس: 50 × ١٥ ميتافيلد عدّى من غير MAX_COST_EXCEEDED
+const READY_QUEUE_MAX_PAGES = 10;    // حارس حلقة — مش سقف بيانات. لو اتضرب، `truncated` بيتقال صراحةً
+const READY_QUEUE_MACHINES  = [
+  { machine: 'S1',
+    q: `metafields.custom.manual_status:'${S1_STATUS.READY}' AND metafields.custom.courier:'Bosta'` },
+  { machine: 'S2',
+    q: `metafields.custom.manual_status:'${S1_STATUS.DELIVERED}' AND ` +
+       `metafields.custom.status_2_r_e:'${S2_STATUS.READY}' AND metafields.custom.courier:'Bosta'` },
+];
+
+const READY_QUEUE_QUERY = `
+  query readyQueue($q: String!, $after: String) {
+    orders(first: ${READY_QUEUE_PAGE}, query: $q, after: $after, sortKey: CREATED_AT, reverse: true) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        id
+        legacyResourceId
+        name
+        createdAt
+        cancelledAt
+        displayFulfillmentStatus
+        currentSubtotalLineItemsQuantity
+        currentTotalPriceSet { shopMoney { amount } }
+        customer { displayName }
+        s1:         metafield(namespace: "custom", key: "manual_status")          { value }
+        s2:         metafield(namespace: "custom", key: "status_2_r_e")           { value }
+        zone:       metafield(namespace: "custom", key: "zone")                   { value }
+        courier:    metafield(namespace: "custom", key: "courier")                { value }
+        printedS1:  metafield(namespace: "custom", key: "printing_time_s1")       { value }
+        packedS1:   metafield(namespace: "custom", key: "s1_packing_date_time")   { value }
+        packedByS1: metafield(namespace: "custom", key: "s1_packed_by")           { value }
+        printedS2:  metafield(namespace: "custom", key: "printing_time_s2")       { value }
+        packedS2:   metafield(namespace: "custom", key: "s2_packing_date_time")   { value }
+        packedByS2: metafield(namespace: "custom", key: "s2_packed_by")           { value }
+        tnS1:       metafield(namespace: "custom", key: "bosta_tracking_number_s1") { value }
+        tnS2:       metafield(namespace: "custom", key: "bosta_tracking_number_s2") { value }
+        tnLegacy:   metafield(namespace: "custom", key: "bosta_tracking_number")  { value }
+      }
+    }
+  }
+`;
+
+// ⚠️ الوقت بيتقارن كـ **لحظة زمنية** مش كنص. الميتافيلدات دي مكتوبة بشكلين
+//    (`…Z` و`…+00:00` — الاتنين موجودين حيًا على نفس المتجر)، والمقارنة
+//    النصّية بتخلّي `2026-09-13T09:00:00+00:00` تبان **أكبر** من
+//    `2026-09-13T11:00:00Z` لأن `+` أصغر من `Z` في ترتيب الحروف. يعني
+//    أوردر سليم يترفض أو أوردر معاد طباعته يعدّي — الاتنين في صمت.
+function readyQueueTime(value) {
+  if (!value) return null;
+  const t = Date.parse(String(value));
+  return Number.isFinite(t) ? t : null;
+}
+
+// بيحوّل صف شوبيفاي لصف طابور، أو يرجّع سبب الاستبعاد.
+// ⚠️ السبب بيترجع **مسمّى** مش `false` — الواجهة مابتعرضهوش النهاردة
+//    (قرار أحمد: المتغلّف بس من غير أي ذكر للباقي)، بس «الأوردر ده فين؟»
+//    سؤال بيتسأل، والرد عليه من غير السبب معناه فتح الأوردر بالإيد.
+function shapeReadyQueueRow(node, machine) {
+  const isS2       = machine === 'S2';
+  const printedRaw = isS2 ? node.printedS2?.value : node.printedS1?.value;
+  const packedRaw  = isS2 ? node.packedS2?.value  : node.packedS1?.value;
+  const printedAt  = readyQueueTime(printedRaw);
+  const packedAt   = readyQueueTime(packedRaw);
+
+  let skip = null;
+  if (node.cancelledAt)                      skip = 'cancelled';
+  else if (!printedRaw || printedAt === null) skip = 'not_printed';
+  else if (!packedRaw  || packedAt  === null) skip = 'not_packed';
+  else if (printedAt > packedAt)              skip = 'reprinted_after_pack';
+
+  return {
+    skip,
+    row: {
+      orderId:    node.legacyResourceId,
+      orderName:  node.name,
+      machine,                                   // S1 | S2 — للعرض والتشخيص، مش بادج (قرار أحمد)
+      createdAt:  node.createdAt,
+      customer:   node.customer?.displayName || null,
+      itemsQty:   node.currentSubtotalLineItemsQuantity ?? null,
+      total:      node.currentTotalPriceSet?.shopMoney?.amount ?? null,
+      s1:         node.s1?.value || null,
+      s2:         node.s2?.value || null,
+      zone:       node.zone?.value || null,
+      courier:    node.courier?.value || null,
+      printedAt:  printedRaw || null,
+      packedAt:   packedRaw  || null,
+      packedBy:   (isS2 ? node.packedByS2?.value : node.packedByS1?.value) || null,
+      // 🟡 الجديد الأول والقديم احتياطي — البند المفتوح فوق
+      tracking:   (isS2 ? node.tnS2?.value : node.tnS1?.value) || node.tnLegacy?.value || null,
+      trackingLegacy: !((isS2 ? node.tnS2?.value : node.tnS1?.value)) && !!node.tnLegacy?.value,
+    },
+  };
+}
+
+// ─── §READY-QUEUE::handleReadyQueue ───
+// GET ?action=get_ready_to_ship
+async function handleReadyQueue(request, env) {
+  assertEnv(env, 'shopify');
+  const token = await getAccessToken(env);
+
+  const orders    = [];
+  const skipped   = { cancelled: 0, not_printed: 0, not_packed: 0, reprinted_after_pack: 0 };
+  const seen      = new Set();     // نفس حارس `seenOrders` بتاع الدفعة — أوردر واحد مرة واحدة
+  let   truncated = false;
+
+  for (const { machine, q } of READY_QUEUE_MACHINES) {
+    let after = null;
+    for (let page = 0; page < READY_QUEUE_MAX_PAGES; page++) {
+      const resp = await shopifyGQL(env, token, READY_QUEUE_QUERY, { q, after }, 'readyQueue');
+      const conn = resp.data?.orders;
+      if (!conn) break;
+
+      for (const node of (conn.nodes || [])) {
+        const key = cleanOrderName(node.name);
+        if (!key || seen.has(key)) continue;       // أوردر في المسارين = صف واحد
+        const { skip, row } = shapeReadyQueueRow(node, machine);
+        if (skip) { skipped[skip] = (skipped[skip] || 0) + 1; continue; }
+        seen.add(key);
+        orders.push(row);
+      }
+
+      if (!conn.pageInfo?.hasNextPage) { after = null; break; }
+      after = conn.pageInfo.endCursor;
+      if (page === READY_QUEUE_MAX_PAGES - 1) truncated = true;
+    }
+  }
+
+  // الأحدث فوق — نفس ترتيب طابور التغليف اللي الموظف جاي منه
+  orders.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+
+  return json({
+    ok: true,
+    orders,
+    counts: {
+      total: orders.length,
+      s1:    orders.filter(o => o.machine === 'S1').length,
+      s2:    orders.filter(o => o.machine === 'S2').length,
+    },
+    skipped,                       // ⚠️ مش معروض في الواجهة — للتشخيص («الأوردر ده فين؟»)
+    truncated,
+    at: new Date().toISOString(),
+  }, 200, request);
+}
+
 // ─── §SHOPIFY::metafieldsSetBatch ───
 // Batches metafield writes across multiple orders into chunks of 25 (Shopify
 // metafieldsSet accepts multiple owners in one mutation). Matching success/failure
@@ -914,6 +1105,12 @@ export default {
       if (action === 'update') {
         if (request.method !== 'POST') return json({ error: 'POST required' }, 405, request);
         return handleUpdate(request, env);
+      }
+
+      // ─── §READY-QUEUE ───────────────────────────────────────────────────
+      // قراءة بحتة — صفر كتابة على شوبيفاي وصفر صف في D1.
+      if (action === 'get_ready_to_ship') {
+        return handleReadyQueue(request, env);
       }
 
       // ─── §LOG-ENDPOINTS ─────────────────────────────────────────────────
