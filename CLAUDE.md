@@ -2,11 +2,11 @@
 
 # سكانر شحن الأوردرات من بوسطة (`Bosta-Orders-Shipped-Scanner`)
 
-![version](https://img.shields.io/badge/version-v3.5.0-blue)
+![version](https://img.shields.io/badge/version-v3.6.0-blue)
 
-**بتعمل إيه:** الموظف بيسكان تراكينج نمرة بوسطة، الأداة بتتأكد من نوع الشحنة وحالتها الحالية على شوبيفاي (S1/S2)، ولو الانتقال صحيح بتكتب الحالة `Shipped` وتعمل Fulfillment تلقائي.
+**بتعمل إيه:** الموظف بيسكان تراكينج نمرة بوسطة، الأداة بتتأكد من نوع الشحنة وحالتها الحالية على شوبيفاي (S1/S2)، ولو الانتقال صحيح بتكتب الحالة `Shipped` وتعمل Fulfillment تلقائي **وتحدّث عهدة الطرد لـ `Courier` (v3.6.0)**.
 **مين بيستخدمها:** المخزن — نقطة الشحن.
-**الإصدار:** Worker `v3.5.0` · الواجهة `v3.5` (والصفحة في الهب على `v1.23.0`)
+**الإصدار:** Worker `v3.6.0` · الواجهة `v3.5` (والصفحة في الهب على `v1.23.0`)
 
 ## الروابط
 
@@ -26,7 +26,7 @@
 | `log_logout` GET | تسجيل خروج |
 | `get_employees` GET | قائمة الموظفين النشطين |
 | `lookup` POST | بحث بوسطة (`trackingNumbers[]`) + فحص S1/S2 على شوبيفاي + التحقق من صلاحية الانتقال — بدون كتابة |
-| `update` POST | إعادة تحقق من الحالة وقت الكتابة + `metafieldsSet` (S1 أو S2 = Shipped) + `fulfillmentCreate` (لو فيه OPEN fulfillmentOrders) + D1 log · وبياخد كمان `rejected[]` فبيسجّلها بـ `type = 'rejected'` **من غير أي كتابة** |
+| `update` POST | إعادة تحقق من الحالة وقت الكتابة + `metafieldsSet` (S1 أو S2 = Shipped) + `fulfillmentCreate` (لو فيه OPEN fulfillmentOrders) **+ `package_whereabouts_s1`/`_s2` = `Courier` (v3.6.0 · §WHEREABOUTS)** + D1 log · وبياخد كمان `rejected[]` فبيسجّلها بـ `type = 'rejected'` **من غير أي كتابة** |
 
 > من واجهة v3.3: الضغط على **"تحديث شوبيفاي"** بينادي `lookup` تاني **قبل** `update`
 > — لو أي أوردر مختار اتغيّرت حالته أو ما اتأكدتش، الدفعة بتتوقف ومفيش `update`
@@ -147,6 +147,43 @@ SELECT COUNT(*) as total, MAX(timestamp) as last_ts FROM logs WHERE tool = 'meta
 > ⚠️ الصفوف الـ ٨٩٣ اللي قبل v3.2 مالهاش `extra.result` خالص، فالاستعلام ده
 > **مابيعدّهاش**. رقم ١٢١٧ فوق (بدون الفلتر) هو اللي يتقارن بخط الأساس التاريخي؛
 > والاستعلام ده هو اللي يتقارن **من 03-09-2026 وطالع**.
+
+## 🔴 §WHEREABOUTS — عهدة الطرد (v3.6.0 · قرار أحمد 15-09-2026)
+
+> ⚠️ **تعديل Worker — Promote مطلوب.** `WORKER_VERSION` بقى `3.6.0`.
+> صفر ترفيع لـ `MIN_WORKER_VERSION` — الحقل ده كتابة سيرفر-سايد best-effort،
+> مفيش واجهة (هنا ولا في الهب) بتقرا `packageWhereabouts` من الرد دلوقتي.
+
+بعد نجاح كتابة الحالة (S1 أو S2 = `Shipped`)، `handleUpdate` بقى بيكتب
+`custom.package_whereabouts_s1` (لو الماكينة `S1`) أو `_s2` (لو `S2`) بقيمة
+**`Courier`** — عهدة الطرد بقت مع بوسطة فعليًا وقت التسليم
+(`ecommoda-order-lifecycle` §17 · Rule 17 · `package-whereabouts.md`).
+
+- 🔴 **ده أول استخدام للحقل ده على قناة بوسطة — وده تعارض مباشر مع نص
+  المهارة الحالي.** `package-whereabouts.md` §2 بتستبعد `custom.zone =
+  Other_Regions` (بوسطة) صراحةً من نطاق الحقل ده، بحجة إن عهدة الطرد على
+  بوسطة بتتتبّع من تتبّع بوسطة نفسه ومش محتاجة الحقل ده. **قرار أحمد
+  15-09-2026 وسّع النطاق** ليشمل بوسطة كمان — الحقل بقى بيتكتب على **كل**
+  أوردر بيتشحن من الأداة دي، بغض النظر عن `custom.zone`/`custom.courier`.
+  ⚠️ **الثمن اللي لازم يتقال:** المهارة نفسها لسه بتوصف النطاق القديم؛
+  تحديثها مطلوب في جلسة تحديث مهارات منفصلة (تحت في المسائل المفتوحة).
+- 🔴 **نداء `metafieldsSetBatch` منفصل عن كتابة الحالة** (`toWrite`) — مش
+  جوّه نفس الدفعة. فشله بيتحوّل لـ `warnings[]` **مش rollback**: نفس مبدأ
+  §UPDATE::fulfillAfterWrite بالحرف — كتابة الحالة على شوبيفاي حصلت فعلاً
+  ومفيش طريقة تتراجع عنها، وحجب الصف عشان فشل حقل تتبّع ثانوي كان هيبقى
+  كذب (الحالة فعلاً اتكتبت).
+- ⚠️ **`packageWhereabouts` بيترجع في كل صف من `results[]`** (`{ key,
+  value, written, error }`) وبيتسجّل جوّه `extra.packageWhereabouts` في D1
+  — للتشخيص لو حد سأل «ليه الحقل ده فاضي على أوردر معيّن؟».
+- ⚠️ **الكتابة بتحصل على `meta.machine` بالحرف** — نفس الماكينة اللي حالتها
+  اتكتبت `Shipped` هي اللي بيتكتب لها `Courier`، مش الاتنين مع بعض. أوردر S1
+  بيتكتب `_s1` بس، وأوردر S2 (دورة R/E) بيتكتب `_s2` بس.
+- ⚠️ **مش على مسار `already` ولا `rejected`.** الكتابة **بعد** نجاح
+  `metafieldsSetBatch` بس — أوردر «خلاص اتعمل» مافيش كتابة حالة جديدة
+  حصلت أصلاً، فمفيش سبب يتلمس عهدة الطرد بتاعته.
+- ⚠️ **الطرف التلاتة من نفس القرار:** `Orders-Packing-Checker` بيكتب
+  `Warehouse` وقت التغليف، و`Bosta-Orders-Returned-Scanner` بيكتب
+  `Warehouse` وقت استلام المرتجع — راجع `CLAUDE.md` بتوعهم.
 
 ## فخاخ الأداة دي
 
@@ -371,18 +408,29 @@ git show 3a2c551^:1.1.html
 | ecommoda-worker-builder | v2.1.0 |
 | ecommoda-html-builder | v6.6.0 |
 | ecommoda-constants | v1.10.0 |
-| ecommoda-order-lifecycle | v1.2.0 |
+| ecommoda-order-lifecycle | v1.8.0 (§WHEREABOUTS — راجع بند مفتوح تحت) |
 | shopify-graphql-helper | v1.0.0 |
 | bosta-api-helper | — (خارج نظام الإصدارات — مفيش سطر إصدار في المهارة) |
 
-آخر مطابقة: 13-09-2026 · `index.js` v3.5.0 · `index.html` v3.5
-🔴 معلّقة: **Promote لـ v3.5.0** (حاجز لطابور «جاهز لتسليم بوسطة» في الهب) ·
+آخر مطابقة: 15-09-2026 · `index.js` v3.6.0 · `index.html` v3.5
+🔴 معلّقة: **Promote لـ v3.6.0** (حاجز لكتابة عهدة الطرد — §WHEREABOUTS) ·
+**Promote لـ v3.5.0** (حاجز لطابور «جاهز لتسليم بوسطة» في الهب) ·
 **`WORKER_SECRET` = سر مجموعة `warehouse_ops` → Promote** (حاجز
 لصفحة `bosta-shipped.html` في الهب — الأداة المستقلة هنا شغّالة زي ما هي)
 
 ## مسائل مفتوحة
 
-- 🔴 **Promote لـ v3.5.0 — حاجز لطابور الهب (جديد).** `?action=get_ready_to_ship`
+- 🔴 **Promote لـ v3.6.0 — حاجز لكتابة عهدة الطرد (جديد).** من غيره
+  `custom.package_whereabouts_s1`/`_s2` مش بيتكتب على أي أوردر اتشحن من هنا،
+  والفشل **صامت بالكامل** لأن الكتابة نفسها best-effort (§WHEREABOUTS فوق) —
+  مفيش تحذير حمرا يبان، الصف بيرجع `success` عادي وبس عهدة الطرد ما بتتكتبش.
+- 🔴 **تحديث `ecommoda-order-lifecycle` → `package-whereabouts.md` §2 —
+  مطلوب من أحمد في جلسة تحديث مهارات منفصلة.** المهارة لسه بتستبعد
+  `Other_Regions` (بوسطة) صراحةً من نطاق الحقل ده، وقرار أحمد 15-09-2026
+  وسّع النطاق ليشمل بوسطة كمان — راجع §WHEREABOUTS فوق والقرار المتطابق في
+  `Orders-Packing-Checker` و`Bosta-Orders-Returned-Scanner`. لحد ما المهارة
+  تتحدّث، **الكود هنا هو مصدر الحقيقة الفعلي، والمهارة نص متأخر عن قرار حي.**
+- 🔴 **Promote لـ v3.5.0 — حاجز لطابور الهب.** `?action=get_ready_to_ship`
   اتكتب ولسه محتاج Promote. **من غيره** الطابور في `bosta-shipped.html`
   بيطلّع بانر أحمر (`Unknown action`) وصف «جاهز لتسليم بوسطة» في الشاشة
   الرئيسية بيقول «تعذّر»، و`WOC_WORKERS.shipped.min = '3.5.0'` بيولّع
@@ -483,6 +531,6 @@ SELECT json_extract(extra,'$.result') AS res, COUNT(*) n, MAX(timestamp) last_ts
 > ده مش عطل جديد بالضرورة — قارن `extra.stage`:** `write` معناها سباق حقيقي
 > بين موظفين، و`lookup` معناها الحالة على شوبيفاي مش زي المتوقّع.
 
-آخر تحديث: 13-09-2026 — `get_ready_to_ship` (v3.5.0) · والصفحة في الهب بقت `bosta-shipped.html` باسم «قسم تسليمات بوسطة»
+آخر تحديث: 15-09-2026 — v3.6.0 (§WHEREABOUTS — كتابة `package_whereabouts_s1`/`_s2 = Courier` بعد نجاح كتابة الحالة)
 
 </div>

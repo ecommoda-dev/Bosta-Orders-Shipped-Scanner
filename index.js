@@ -11,6 +11,18 @@
 //                       extra.result = 'rejected' | 'already'  (v3.4.0 — "خلاص اتعمل" حالة مستقلة)
 //                       extra.stage  = 'lookup' | 'write'      (v3.4.0 — اترفض من الاستعلام ولا اتوقف وقت الكتابة)
 //
+// v3.6.0 — §UPDATE::whereaboutsAfterWrite (قرار أحمد 15-09-2026): بعد نجاح
+//   كتابة S1/S2 = Shipped، الـ Worker بقى بيكتب `custom.package_whereabouts_s1`
+//   أو `_s2` (حسب الماكينة اللي اتكتبت) بقيمة `Courier` — عهدة الطرد بقت مع
+//   بوسطة فعليًا (ecommoda-order-lifecycle §17 · Rule 17). نداء `metafieldsSet`
+//   منفصل عن كتابة الحالة، best-effort زي فلفلمنت بالحرف: فشله warning على
+//   الصف (`extra.packageWhereabouts` في D1) مش rollback على حالة الشحن.
+//   ⚠️ ده أول استخدام للحقل ده على قناة بوسطة — المهارة (order-lifecycle
+//   §package-whereabouts.md §2) كانت بتوصفه محصور في مناديب/شو روم بس، وقرار
+//   أحمد ده وسّع النطاق ليشمل بوسطة كمان. `Orders-Packing-Checker` (كتابة
+//   `Warehouse` وقت التغليف) و`Bosta-Orders-Returned-Scanner` (كتابة
+//   `Warehouse` وقت الاستلام) طرفان تلاتة من نفس القرار — راجع CLAUDE.md.
+//
 // v3.4.0 — مراجعة شاملة (07-09-2026). ستة بنود، كلهم من عيلة "الفشل الصامت":
 //   ① §SHOPIFY::fetchShopifyOrdersByNames كانت **مش بتتأكد إن الأوردر الراجع
 //      من البحث هو المطلوب**، وكانت بتنضّف الاسم بصمت (`replace(/[^a-zA-Z0-9-]/g,'')`)
@@ -103,7 +115,7 @@
 // ══════════════════════════════════════════════════════════════
 // §CONSTANTS
 // ══════════════════════════════════════════════════════════════
-const WORKER_VERSION = '3.5.0';                             // ?action=get_config — الواجهة بتقارنه بـ MIN_WORKER_VERSION
+const WORKER_VERSION = '3.6.0';                             // ?action=get_config — الواجهة بتقارنه بـ MIN_WORKER_VERSION
 const TOOL_NAME      = 'bosta_tracker';                    // login/logout D1 logging only
 const SOURCE_TOOL     = 'bosta_orders_shipped_scanner';     // tag used in extra.sourceTool for status-write logs
 const SOURCE_TOOL_LIKE = `%"sourceTool":"${SOURCE_TOOL}"%`;
@@ -1624,6 +1636,33 @@ async function handleUpdate(request, env) {
           }
         }
 
+        // ─── §UPDATE::whereaboutsAfterWrite ───
+        // عهدة الطرد (order-lifecycle §17 · Rule 17) — الأوردر بقى في عهدة
+        // بوسطة فعليًا بمجرد ما الحالة اتكتبت Shipped، على نفس الماكينة اللي
+        // اتكتبت (S1 للشحنة الأصلية · S2 لدورة R/E). best-effort فوق كتابة
+        // تمّت — فشله warning على الصف، مش rollback على حالة الشحن.
+        // ⚠️ قرار أحمد 15-09-2026 وسّع الحقل ده ليشمل قناة بوسطة، بعد ما كان
+        // محصور في مناديب/شو روم بس (order-lifecycle §17 §2).
+        const whereaboutsKey = meta.machine === 'S1' ? 'package_whereabouts_s1' : 'package_whereabouts_s2';
+        const whereabouts     = { key: whereaboutsKey, value: 'Courier', written: false, error: null };
+        try {
+          const waResult = await metafieldsSetBatch(env, token, [{
+            ownerId: meta.orderGid, namespace: 'custom', key: whereaboutsKey,
+            type: 'single_line_text_field', value: whereabouts.value,
+          }]);
+          const waKey = `${meta.orderGid}::${whereaboutsKey}`;
+          if (waResult.successSet.has(waKey)) {
+            whereabouts.written = true;
+            actions.push(`عهدة الطرد: ${whereaboutsKey} = ${whereabouts.value}`);
+          } else {
+            whereabouts.error = waResult.errorByKey[waKey] || 'فشل غير معروف';
+            warnings.push(`عهدة الطرد (${whereaboutsKey}) ما اتكتبتش: ${whereabouts.error}`);
+          }
+        } catch (err) {
+          whereabouts.error = err.message;
+          warnings.push(`عهدة الطرد (${whereaboutsKey}) فشلت: ${err.message}`);
+        }
+
         // ⚠️ تلات حالات مش اتنين (Step 5A ④) — warning ممنوع يتحسب نجاح
         const status = warnings.length ? 'warning' : 'success';
 
@@ -1649,6 +1688,7 @@ async function handleUpdate(request, env) {
               machine:        meta.machine,
               field:          meta.field,
               fulfillment,
+              packageWhereabouts: whereabouts,
               actions,
               result: status,          // ← عمود "النتيجة" في تاب السجل بيقرا ده
             },
@@ -1670,6 +1710,7 @@ async function handleUpdate(request, env) {
           valueBefore: meta.valueBefore,
           valueAfter:  meta.valueAfter,
           fulfillment,
+          packageWhereabouts: whereabouts,
         });
       }
     }
