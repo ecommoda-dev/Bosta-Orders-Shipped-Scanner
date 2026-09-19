@@ -2,11 +2,11 @@
 
 # سكانر شحن الأوردرات من بوسطة (`Bosta-Orders-Shipped-Scanner`)
 
-![version](https://img.shields.io/badge/version-v3.6.0-blue)
+![version](https://img.shields.io/badge/version-v3.6.1-blue)
 
 **بتعمل إيه:** الموظف بيسكان تراكينج نمرة بوسطة، الأداة بتتأكد من نوع الشحنة وحالتها الحالية على شوبيفاي (S1/S2)، ولو الانتقال صحيح بتكتب الحالة `Shipped` وتعمل Fulfillment تلقائي **وتحدّث عهدة الطرد لـ `Courier` (v3.6.0)**.
 **مين بيستخدمها:** المخزن — نقطة الشحن.
-**الإصدار:** Worker `v3.6.0` · الواجهة `v3.5` (والصفحة في الهب على `v1.23.0`)
+**الإصدار:** Worker `v3.6.1` · الواجهة `v3.5` (والصفحة في الهب على `v1.23.0`)
 
 ## الروابط
 
@@ -412,10 +412,10 @@ git show 3a2c551^:1.1.html
 | shopify-graphql-helper | v1.0.0 |
 | bosta-api-helper | — (خارج نظام الإصدارات — مفيش سطر إصدار في المهارة) |
 
-آخر مطابقة: 15-09-2026 · `index.js` v3.6.0 · `index.html` v3.5
-🔴 معلّقة: **Promote لـ v3.6.0** (حاجز لكتابة عهدة الطرد — §WHEREABOUTS) ·
-**Promote لـ v3.5.0** (حاجز لطابور «جاهز لتسليم بوسطة» في الهب) ·
-**`WORKER_SECRET` = سر مجموعة `warehouse_ops` → Promote** (حاجز
+آخر مطابقة: 19-09-2026 · `index.js` v3.6.1 · `index.html` v3.5
+🔴 معلّقة: **Promote لـ v3.6.1** (يشمل v3.6.0 حاجز لكتابة عهدة الطرد —
+§WHEREABOUTS) · **Promote لـ v3.5.0** (حاجز لطابور «جاهز لتسليم بوسطة» في
+الهب) · **`WORKER_SECRET` = سر مجموعة `warehouse_ops` → Promote** (حاجز
 لصفحة `bosta-shipped.html` في الهب — الأداة المستقلة هنا شغّالة زي ما هي)
 
 ## مسائل مفتوحة
@@ -531,6 +531,12 @@ SELECT json_extract(extra,'$.result') AS res, COUNT(*) n, MAX(timestamp) last_ts
 > ده مش عطل جديد بالضرورة — قارن `extra.stage`:** `write` معناها سباق حقيقي
 > بين موظفين، و`lookup` معناها الحالة على شوبيفاي مش زي المتوقّع.
 
-آخر تحديث: 15-09-2026 — v3.6.0 (§WHEREABOUTS — كتابة `package_whereabouts_s1`/`_s2 = Courier` بعد نجاح كتابة الحالة)
+آخر تحديث: 19-09-2026 — v3.6.1 (`getAccessToken` retry/backoff — §٨② في
+`docs/query-cost-experiment.md` بريبو الهب. السياق: الخمس Workers اللي
+بتظهر على الشاشة الرئيسية بتشارك نفس الـ Custom App، وقياس حي 19-09-2026
+لقى فشل جماعي — ٤ من ٥ طوابير وقعوا مع بعض لما الشاشة حمّلت الخمسة
+بالتوازي، حتى أدوات ما اتلمستش في نفس التمريرة. صفر تغيير في العقد)
+
+15-09-2026 — v3.6.0 (§WHEREABOUTS — كتابة `package_whereabouts_s1`/`_s2 = Courier` بعد نجاح كتابة الحالة)
 
 </div>
