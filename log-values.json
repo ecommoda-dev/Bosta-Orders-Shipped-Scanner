@@ -1,0 +1,32 @@
+{
+  "tool": "bosta_tracker",
+  "since": null,
+  "types": {
+    "login": {
+      "result": null,
+      "stage": null,
+      "desc": "دخول موظف"
+    },
+    "logout": {
+      "result": null,
+      "stage": null,
+      "desc": "خروج موظف"
+    },
+    "rejected": {
+      "result": [
+        "already",
+        "rejected"
+      ],
+      "stage": null,
+      "desc": "المسح اترفض — الانتقال ممنوع أو الحالة المستهدفة موجودة أصلاً"
+    },
+    "update": {
+      "result": [
+        "error",
+        null
+      ],
+      "stage": null,
+      "desc": "تحديث ميتافيلد حالة الأوردر بعد مسح شحنة مشحونة"
+    }
+  }
+}
