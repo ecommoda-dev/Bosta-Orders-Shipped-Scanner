@@ -13,15 +13,22 @@
       "desc": "خروج موظف"
     },
     "rejected": {
+      "tool": "metafields_change",
       "result": [
         "already",
         "rejected"
       ],
-      "stage": null,
+      "stage": [
+        "lookup",
+        "write"
+      ],
       "desc": "المسح اترفض — الانتقال ممنوع أو الحالة المستهدفة موجودة أصلاً"
     },
     "update": {
+      "tool": "metafields_change",
       "result": [
+        "success",
+        "warning",
         "error",
         null
       ],

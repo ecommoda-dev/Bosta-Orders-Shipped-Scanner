@@ -2,11 +2,11 @@
 
 # سكانر شحن الأوردرات من بوسطة (`Bosta-Orders-Shipped-Scanner`)
 
-![version](https://img.shields.io/badge/version-v3.6.1-blue)
+![version](https://img.shields.io/badge/version-v3.6.2-blue)
 
 **بتعمل إيه:** الموظف بيسكان تراكينج نمرة بوسطة، الأداة بتتأكد من نوع الشحنة وحالتها الحالية على شوبيفاي (S1/S2)، ولو الانتقال صحيح بتكتب الحالة `Shipped` وتعمل Fulfillment تلقائي **وتحدّث عهدة الطرد لـ `Courier` (v3.6.0)**.
 **مين بيستخدمها:** المخزن — نقطة الشحن.
-**الإصدار:** Worker `v3.6.1` · الواجهة `v3.5` (والصفحة في الهب على `v1.23.0`)
+**الإصدار:** Worker `v3.6.2` · الواجهة `v3.5` (والصفحة في الهب على `v1.23.0`)
 
 ## الروابط
 
@@ -405,18 +405,20 @@ git show 3a2c551^:1.1.html
 
 | المهارة | الإصدار وقت آخر تعديل |
 |---|---|
-| ecommoda-worker-builder | v2.1.0 |
+| ecommoda-worker-builder | v3.7.1 (Step 7-ج — الحارس الديناميكي لقيم اللوج، §LOG-REG) |
 | ecommoda-html-builder | v6.6.0 |
-| ecommoda-constants | v1.10.0 |
+| ecommoda-constants | v3.1.0 |
 | ecommoda-order-lifecycle | v1.8.0 (§WHEREABOUTS — راجع بند مفتوح تحت) |
 | shopify-graphql-helper | v1.0.0 |
 | bosta-api-helper | — (خارج نظام الإصدارات — مفيش سطر إصدار في المهارة) |
 
-آخر مطابقة: 19-09-2026 · `index.js` v3.6.1 · `index.html` v3.5
-🔴 معلّقة: **Promote لـ v3.6.1** (يشمل v3.6.0 حاجز لكتابة عهدة الطرد —
-§WHEREABOUTS) · **Promote لـ v3.5.0** (حاجز لطابور «جاهز لتسليم بوسطة» في
-الهب) · **`WORKER_SECRET` = سر مجموعة `warehouse_ops` → Promote** (حاجز
-لصفحة `bosta-shipped.html` في الهب — الأداة المستقلة هنا شغّالة زي ما هي)
+آخر مطابقة: 24-09-2026 · `index.js` v3.6.2 · `index.html` v3.5
+🔴 معلّقة: **Promote لـ v3.6.2** (الحارس الديناميكي لقيم اللوج — §LOG-REG،
+مراقبة بس صفر تغيير في المنطق التشغيلي) · **Promote لـ v3.6.1** (يشمل v3.6.0
+حاجز لكتابة عهدة الطرد — §WHEREABOUTS) · **Promote لـ v3.5.0** (حاجز لطابور
+«جاهز لتسليم بوسطة» في الهب) · **`WORKER_SECRET` = سر مجموعة `warehouse_ops`
+→ Promote** (حاجز لصفحة `bosta-shipped.html` في الهب — الأداة المستقلة هنا
+شغّالة زي ما هي)
 
 ## مسائل مفتوحة
 
@@ -531,7 +533,15 @@ SELECT json_extract(extra,'$.result') AS res, COUNT(*) n, MAX(timestamp) last_ts
 > ده مش عطل جديد بالضرورة — قارن `extra.stage`:** `write` معناها سباق حقيقي
 > بين موظفين، و`lookup` معناها الحالة على شوبيفاي مش زي المتوقّع.
 
-آخر تحديث: 19-09-2026 — v3.6.1 (`getAccessToken` retry/backoff — §٨② في
+آخر تحديث: 24-09-2026 — v3.6.2 (`check-log-values.mjs` اتستبدل بالنسخة
+المصلَّحة — كانت بتفوّت object shorthand `{ tool, type }` في صمت — والطبقة ٥
+(worker-builder Step 7-ج) اتنفّذت: حارس ديناميكي جوّه `writeLog` بمفتاح الزوج
+(tool,type)، `LOG_REGISTRY` مبني من `log-values.json`، ومفيش رفض كتابة أبدًا —
+قيمة غير مسجّلة بتاخد `extra._unregistered` وتتسجّل في `log_value_alerts`
+بعد الكتابة. الفحص عدّى نضيف من غير أي قيم ناقصة أو ديناميكية — السجل
+الحالي كان كامل. صفر تغيير في المنطق التشغيلي)
+
+19-09-2026 — v3.6.1 (`getAccessToken` retry/backoff — §٨② في
 `docs/query-cost-experiment.md` بريبو الهب. السياق: الخمس Workers اللي
 بتظهر على الشاشة الرئيسية بتشارك نفس الـ Custom App، وقياس حي 19-09-2026
 لقى فشل جماعي — ٤ من ٥ طوابير وقعوا مع بعض لما الشاشة حمّلت الخمسة
