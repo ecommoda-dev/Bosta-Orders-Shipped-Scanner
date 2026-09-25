@@ -7,13 +7,13 @@
 **بتعمل إيه:** الموظف بيسكان تراكينج نمرة بوسطة، الأداة بتتأكد من نوع الشحنة وحالتها الحالية على شوبيفاي (S1/S2)، ولو الانتقال صحيح بتكتب الحالة `Shipped` وتعمل Fulfillment تلقائي **وتحدّث عهدة الطرد لـ `Courier` (v3.6.0)**.
 **مين بيستخدمها:** المخزن — نقطة الشحن.
 **الإصدار:** Worker `v3.6.2` — **الريبو ده Worker وبس من 25-09-2026** (راجع
-القسم تحت). الواجهة الوحيدة `bosta-shipped.html` جوّه `Warehouse-Operations-Center`
+القسم تحت). الواجهة الوحيدة `Bosta-Orders-Shipped-Scanner.html` جوّه `Warehouse-Operations-Center`
 على `v1.23.0`.
 
 ## الروابط
 
 ```
-الواجهة    : https://ecommoda-dev.github.io/Warehouse-Operations-Center/bosta-shipped.html
+الواجهة    : https://ecommoda-dev.github.io/Warehouse-Operations-Center/Bosta-Orders-Shipped-Scanner.html
 الـ Worker : https://bosta-orders-shipped-scanner.ecommoda-dev.workers.dev
 اسم الـ Worker في الداشبورد: bosta-orders-shipped-scanner     ← لازم يطابق name في wrangler.toml
 ```
@@ -115,7 +115,7 @@ const ALLOWED_ORIGINS = ['https://ecommoda-dev.github.io'];
 بتتسرّب) تفضل مقروءة من أي أصل. الثغرة دي بتتفتح بالنسيان مش بقرار، فالافتراضي
 نفسه اتقفل. **متفتحوش تاني.**
 
-⚠️ **نتيجة عملية:** أي فتح لصفحة `bosta-shipped.html` من غير أصل `ecommoda-dev.github.io`
+⚠️ **نتيجة عملية:** أي فتح لصفحة `Bosta-Orders-Shipped-Scanner.html` من غير أصل `ecommoda-dev.github.io`
 (نسخة محلية بـ `file://` أو أي دومين تاني) مش هيوصل للـ Worker — ده مقصود.
 الاختبار بيتعمل على نسخة GitHub Pages بتاعة `Warehouse-Operations-Center`
 (الريبو ده مالوش `index.html` خالص من 25-09-2026).
@@ -266,8 +266,8 @@ SELECT COUNT(*) as total, MAX(timestamp) as last_ts FROM logs WHERE tool = 'meta
 ## 🔴 الريبو ده Worker وبس من الآن فصاعدًا (25-09-2026 · قرار أحمد)
 
 `index.html` بتاع الريبو ده **اتشال بالكامل**. الأداة كانت صفحة مستقلة **وكمان**
-صفحة `bosta-shipped.html` جوّه هب المخزن (من 10-09-2026) — دلوقتي بقت **بس**
-صفحة `bosta-shipped.html` جوّه `Warehouse-Operations-Center`، ومفيش نسخة مستقلة
+صفحة `Bosta-Orders-Shipped-Scanner.html` جوّه هب المخزن (من 10-09-2026) — دلوقتي بقت **بس**
+صفحة `Bosta-Orders-Shipped-Scanner.html` جوّه `Warehouse-Operations-Center`، ومفيش نسخة مستقلة
 ولا نقطة رجوع خالص. الريبو ده بقى **Worker وبس** — نفس شكل
 `Package-Transfer-To-Office`/`Package-Transfer-To-Warehouse` بالحرف
 (`ecommoda-tool-migration-playbook` قرار ٨).
@@ -301,14 +301,14 @@ SELECT COUNT(*) as total, MAX(timestamp) as last_ts FROM logs WHERE tool = 'meta
 **الروابط بعد الشيل:**
 
 ```
-الواجهة  : https://ecommoda-dev.github.io/Warehouse-Operations-Center/bosta-shipped.html
+الواجهة  : https://ecommoda-dev.github.io/Warehouse-Operations-Center/Bosta-Orders-Shipped-Scanner.html
 الـ Worker: https://bosta-orders-shipped-scanner.ecommoda-dev.workers.dev
 ```
 
 ## 🚚 §READY-QUEUE — `?action=get_ready_to_ship` (v3.5.0 · قرار أحمد 13-09-2026)
 
 endpoint **قراءة بحتة** بيرجّع الأوردرات اللي **الطرد بتاعها موجود في المخزن
-ومستني يتسلّم لبوسطة**. الطابور بيتعرض في `bosta-shipped.html` (الخطوة ١)
+ومستني يتسلّم لبوسطة**. الطابور بيتعرض في `Bosta-Orders-Shipped-Scanner.html` (الخطوة ١)
 وفي صف «جاهز لتسليم بوسطة» في الشاشة الرئيسية — **الاتنين بيناديوا نفس
 الـ endpoint**، فمستحيل الرقم يخالف القايمة (درس R1).
 
@@ -410,7 +410,7 @@ Worker وبس من دلوقتي**
 مراقبة بس صفر تغيير في المنطق التشغيلي) · **Promote لـ v3.6.1** (يشمل v3.6.0
 حاجز لكتابة عهدة الطرد — §WHEREABOUTS) · **Promote لـ v3.5.0** (حاجز لطابور
 «جاهز لتسليم بوسطة» في الهب) · **`WORKER_SECRET` = سر مجموعة `warehouse_ops`
-→ Promote** (حاجز لصفحة `bosta-shipped.html` في الهب — الواجهة الوحيدة
+→ Promote** (حاجز لصفحة `Bosta-Orders-Shipped-Scanner.html` في الهب — الواجهة الوحيدة
 المتبقّية)
 
 ## مسائل مفتوحة
@@ -426,7 +426,7 @@ Worker وبس من دلوقتي**
   `Orders-Packing-Checker` و`Bosta-Orders-Returned-Scanner`. لحد ما المهارة
   تتحدّث، **الكود هنا هو مصدر الحقيقة الفعلي، والمهارة نص متأخر عن قرار حي.**
 - 🔴 **Promote لـ v3.5.0 — حاجز لطابور الهب.** `?action=get_ready_to_ship`
-  اتكتب ولسه محتاج Promote. **من غيره** الطابور في `bosta-shipped.html`
+  اتكتب ولسه محتاج Promote. **من غيره** الطابور في `Bosta-Orders-Shipped-Scanner.html`
   بيطلّع بانر أحمر (`Unknown action`) وصف «جاهز لتسليم بوسطة» في الشاشة
   الرئيسية بيقول «تعذّر»، و`WOC_WORKERS.shipped.min = '3.5.0'` بيولّع
   «⚠️ Worker قسم تسليمات بوسطة نسخة قديمة».
@@ -436,7 +436,7 @@ Worker وبس من دلوقتي**
   build — بس الـ **Promote يدوي** زي ما هو.
 
 - 🔴 **`WORKER_SECRET` = قيمة مجموعة `warehouse_ops` → Promote — حاجز
-  لـ`bosta-shipped.html` في الهب.** فوق في قسم الدمج. **ومفتاح `localStorage`
+  لـ`Bosta-Orders-Shipped-Scanner.html` في الهب.** فوق في قسم الدمج. **ومفتاح `localStorage`
   واحد بس دلوقتي** (`warehouse_ops_worker_secret`) — الريبو ده بقى Worker
   وبس، فمفيش مفتاح قديم لازم يتلزق فيه القيمة كمان.
 - ⚠️ **§BOSTA بقى في ريبوهين** (راجع القسم فوق) — أي إصلاح لازم يتعمل في
@@ -488,14 +488,14 @@ Worker وبس من دلوقتي**
 
 ## بعد نشر v3.4.0 / الواجهة v3.5 — تأكيدات مطلوبة
 
-> ⚠️ **الواجهة الوحيدة دلوقتي `bosta-shipped.html` في `Warehouse-Operations-Center`**
+> ⚠️ **الواجهة الوحيدة دلوقتي `Bosta-Orders-Shipped-Scanner.html` في `Warehouse-Operations-Center`**
 > (الريبو ده Worker وبس) — الاختبارات التالتة بتتعمل من هناك، مش من رابط الريبو ده.
 > **الواجهة بتطلب Worker ≥ v3.4.0** (`MIN_WORKER_VERSION`). لو الـ Promote
 > ما تمّش، بادج «⚠️ الـ Worker نسخة قديمة» هيظهر في الهيدر — **مش تحذير
 > تجميلي**: الواجهة بتبعت `results`/`machines`/`sortBy` وبتقرا حالة `already`،
 > والـ Worker القديم بيتجاهلهم في صمت.
 
-1. **Promote** بعد أول build، وبعدها افتح `bosta-shipped.html` في الهب
+1. **Promote** بعد أول build، وبعدها افتح `Bosta-Orders-Shipped-Scanner.html` في الهب
    واضغط 🩺 في الإعدادات — لازم كل الفحوصات ✅. الفحص الجديد **`read_all_orders`**
    ممكن يطلع ❌ وده **مقبول دلوقتي** (راجع المسائل المفتوحة) — الباقي لازم يبقى ✅.
 2. **اختبار نزع السلاح (أهم واحد):** استعلم عن أوردر واحد متوافق، اضغط "تحديث
@@ -509,7 +509,7 @@ Worker وبس من دلوقتي**
 5. **اختبار السكانر:** اسكن باركودين ورا بعض بسرعة — لازم يدخلوا **رقمين
    منفصلين**، ولو اتلزقوا لازم تظهر رسالة "طوله N رقم" مش يتقبل الرقم الملزوق.
 6. أول سكان فعلي: اتأكد إن الصف اللي فلفلمنته فشل بيبان **أصفر** مش أخضر.
-7. **الـ CORS:** افتح `bosta-shipped.html` من رابط الهب (`ecommoda-dev.github.io/Warehouse-Operations-Center/`)
+7. **الـ CORS:** افتح `Bosta-Orders-Shipped-Scanner.html` من رابط الهب (`ecommoda-dev.github.io/Warehouse-Operations-Center/`)
    وتأكد إنها شغّالة. لو ظهر «تعذّر الوصول للـ Worker (شبكة أو CORS)» يبقى
    الأصل في `ALLOWED_ORIGINS` مش مطابق — راجعه حرف بحرف (بدون `/` في الآخر).
 
@@ -524,7 +524,13 @@ SELECT json_extract(extra,'$.result') AS res, COUNT(*) n, MAX(timestamp) last_ts
 > ده مش عطل جديد بالضرورة — قارن `extra.stage`:** `write` معناها سباق حقيقي
 > بين موظفين، و`lookup` معناها الحالة على شوبيفاي مش زي المتوقّع.
 
-آخر تحديث: 25-09-2026 — **`index.html` اتشال بالكامل — الريبو ده Worker وبس
+آخر تحديث: 25-09-2026 (ب) — **صفحة الهب اتسمّت تاني.** رابط الهب في الروابط
+فوق بقى `.../Bosta-Orders-Shipped-Scanner.html` بدل `.../bosta-shipped.html` —
+قاعدة جديدة في `Warehouse-Operations-Center`: رابط أي أداة مدمجة جوّه الهب
+يتاخد بالنص من اسم ريبو الـ Worker بتاعها. صفر تعديل هنا (`index.js` ما
+اتلمسش) — تحديث توثيقي بحت.
+
+25-09-2026 (أ) — **`index.html` اتشال بالكامل — الريبو ده Worker وبس
 من دلوقتي (قرار أحمد).** الأداة كانت صفحة مستقلة وكمان `bosta-shipped.html`
 جوّه الهب من 10-09-2026؛ الواجهة المستقلة بقت **مش موجودة خالص**، ومفيش
 إعادة توجيه من رابط الـ Pages القديم (بيدّي 404 بقرار). `index.js` ما اتلمسش
