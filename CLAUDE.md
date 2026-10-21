@@ -37,7 +37,7 @@
 > — لو أي أوردر مختار اتغيّرت حالته أو ما اتأكدتش، الدفعة بتتوقف ومفيش `update`
 > أصلاً. فحص الـ Worker وقت الكتابة باقي زي ما هو — ده حارس تاني مش بديل.
 | `get_logs` | سجل العمليات — فلاتر server-side كقوايم (`employees` · `types` · `results` · `machines`) + `search` + `dateFrom`/`dateTo` + pagination + **ترتيب server-side** (`sortBy`/`sortDir` بقائمة بيضاء مقفولة) |
-| `GET ?action=get_done_counts` | **(v3.7.0)** «اللي خلص النهارده / أمس» جاهز: أوردرات **مميزة** لكل يوم قاهرة (UTC+3) في SQL واحد — `{ today, yesterday, counts:{today,yesterday} }`. التعريف: `type = update` و`extra.result ∈ success/warning` (`already`/`rejected` مش بيتعدّوا) داخل نطاق `sourceTool`. قراءة بحتة، والهب (§HOME-DONE) بيقراه ولو مش موجود بيرجع لتصفيح `get_logs` |
+| `GET ?action=get_done_counts` | **(v3.7.0)** «اللي خلص النهارده / أمس» جاهز: أوردرات **مميزة** لكل يوم قاهرة (محسوب بـ Intl على Africa/Cairo — يتبع التوقيت الصيفي، من 3.7.1) في SQL واحد — `{ today, yesterday, counts:{today,yesterday} }`. التعريف: `type = update` و`extra.result ∈ success/warning` (`already`/`rejected` مش بيتعدّوا) داخل نطاق `sourceTool`. قراءة بحتة، والهب (§HOME-DONE) بيقراه ولو مش موجود بيرجع لتصفيح `get_logs` |
 | `get_logs_count` | عدد الصفوف المطابقة **لنفس الفلاتر بالظبط** |
 | `get_logs_export` | تصدير كامل حتى `LOG_EXPORT_MAX` (2000) — وبيرجّع `cap` و`total` و`truncated` معاه |
 | `get_ready_to_ship` GET | **v3.5.0** — طابور «جاهز للتسليم لبوسطة»: قراءة شوبيفاي بحتة (صفر كتابة · صفر نداء بوسطة · صفر صف D1). بيرجّع `orders[]` + `counts` + `skipped` + `truncated` |

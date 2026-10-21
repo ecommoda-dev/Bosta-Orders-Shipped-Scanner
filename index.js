@@ -122,7 +122,7 @@
 // ══════════════════════════════════════════════════════════════
 // §CONSTANTS
 // ══════════════════════════════════════════════════════════════
-const WORKER_VERSION = '3.7.0';                             // ?action=get_config — الواجهة بتقارنه بـ MIN_WORKER_VERSION
+const WORKER_VERSION = '3.7.1';                             // ?action=get_config — الواجهة بتقارنه بـ MIN_WORKER_VERSION
 const TOOL_NAME      = 'bosta_tracker';                    // login/logout D1 logging only
 const SOURCE_TOOL     = 'bosta_orders_shipped_scanner';     // tag used in extra.sourceTool for status-write logs
 const SOURCE_TOOL_LIKE = `%"sourceTool":"${SOURCE_TOOL}"%`;
@@ -1148,22 +1148,38 @@ async function createFulfillment(env, token, openFulfillmentOrders) {
 // ══════════════════════════════════════════════════════════════
 // الهب (الشاشة الرئيسية · §HOME-DONE) كان بيعدّ ده في المتصفح بتصفيح get_logs.
 // هنا العدّ في SQL واحد: أوردرات **مميزة** لكل يوم قاهرة.
-// ⚠️ يوم القاهرة = UTC+3 ثابتة (نفس toCairo في shell.js) — date(timestamp,'+3 hours').
+// ⚠️ يوم القاهرة بـ Intl على Africa/Cairo (مش +3 ثابتة): مصر بترجع UTC+2 يوم 29-10-2026.
+//    الحدود (بداية أمس / النهارده / بكرة) بتتحسب كلحظات UTC في JS، والـ SQL بيقارن
+//    timestamp بيها مباشرةً — فمفيش أي إزاحة ثابتة جوّه الاستعلام.
 //    ممنوع substr(timestamp,1,10) هنا: ده يوم UTC وبيفقد ٩م–١٢ص من يوم القاهرة.
 // ⚠️ التمييز **جوّه اليوم الواحد**: نفس الأوردر أمس واليوم بيتعدّ في اليومين.
 // ⚠️ read-only — صفر كتابة في D1.
-function cairoDays() {
-  const today = new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
-  const y = new Date(Date.parse(`${today}T00:00:00Z`) - 24 * 3600 * 1000).toISOString().slice(0, 10);
-  return { today, yesterday: y };
+const _cairoFmt = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Africa/Cairo', hourCycle: 'h23',
+  year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+});
+function cairoOffsetMs(t) {
+  const o = {};
+  for (const p of _cairoFmt.formatToParts(new Date(t))) if (p.type !== 'literal') o[p.type] = p.value;
+  const h = o.hour === '24' ? 0 : +o.hour;     // حارس: بعض المحركات بترجّع 24
+  return Date.UTC(+o.year, +o.month - 1, +o.day, h, +o.minute, +o.second) - Math.floor(t / 1000) * 1000;
+}
+// بداية يوم القاهرة (`YYYY-MM-DD`) كلحظة UTC بالملّي.
+function cairoDayStartMs(dayStr) {
+  const guess = Date.parse(`${dayStr}T00:00:00Z`);
+  return guess - cairoOffsetMs(guess - cairoOffsetMs(guess));
+}
+function cairoDays(now = Date.now()) {
+  const addDay = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+  const today = new Date(now + cairoOffsetMs(now)).toISOString().slice(0, 10);
+  return { today, yesterday: addDay(today, -1), tomorrow: addDay(today, 1) };
 }
 
-async function getDoneCounts(db) {
-  const { today, yesterday } = cairoDays();
-  // حد أدنى خشن على timestamp عشان الفهرس يشتغل (يوم زيادة أمان)، والفلتر الدقيق بـ date().
-  const coarse = new Date(Date.parse(`${yesterday}T00:00:00Z`) - 24 * 3600 * 1000).toISOString();
+async function getDoneCounts(db, now = Date.now()) {
+  const { today, yesterday, tomorrow } = cairoDays(now);
+  const iso = d => new Date(cairoDayStartMs(d)).toISOString();
   const rows = await db.prepare(
-    `SELECT date(timestamp, '+3 hours') AS day,
+    `SELECT CASE WHEN timestamp >= ? THEN 'today' ELSE 'yesterday' END AS bucket,
             COUNT(DISTINCT REPLACE(TRIM(order_name), '#', '')) AS n
        FROM logs
       WHERE tool = 'metafields_change' AND type = 'update' AND extra LIKE ?
@@ -1171,12 +1187,12 @@ async function getDoneCounts(db) {
                   THEN COALESCE(json_extract(extra, '$.result'), '') ELSE '' END) IN ('success','warning')
         AND order_name IS NOT NULL AND TRIM(order_name) <> ''
         AND timestamp >= ?
-        AND date(timestamp, '+3 hours') >= ?
-      GROUP BY day`
-  ).bind(SOURCE_TOOL_LIKE, coarse, yesterday).all();
-  const out = { [today]: 0, [yesterday]: 0 };
-  for (const r of rows.results || []) if (r.day in out) out[r.day] = r.n;
-  return { today, yesterday, counts: { today: out[today], yesterday: out[yesterday] } };
+        AND timestamp < ?
+      GROUP BY bucket`
+  ).bind(iso(today), SOURCE_TOOL_LIKE, iso(yesterday), iso(tomorrow)).all();
+  const out = { today: 0, yesterday: 0 };
+  for (const r of rows.results || []) if (r.bucket in out) out[r.bucket] = r.n;
+  return { today, yesterday, counts: out };
 }
 
 export default {
