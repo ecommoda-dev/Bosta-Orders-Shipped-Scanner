@@ -122,7 +122,7 @@
 // ══════════════════════════════════════════════════════════════
 // §CONSTANTS
 // ══════════════════════════════════════════════════════════════
-const WORKER_VERSION = '3.6.2';                             // ?action=get_config — الواجهة بتقارنه بـ MIN_WORKER_VERSION
+const WORKER_VERSION = '3.7.0';                             // ?action=get_config — الواجهة بتقارنه بـ MIN_WORKER_VERSION
 const TOOL_NAME      = 'bosta_tracker';                    // login/logout D1 logging only
 const SOURCE_TOOL     = 'bosta_orders_shipped_scanner';     // tag used in extra.sourceTool for status-write logs
 const SOURCE_TOOL_LIKE = `%"sourceTool":"${SOURCE_TOOL}"%`;
@@ -1142,6 +1142,43 @@ async function createFulfillment(env, token, openFulfillmentOrders) {
 // ══════════════════════════════════════════════════════════════
 // §HANDLER
 // ══════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════
+// §DONE-COUNTS — «اللي خلص النهارده / أمس» جاهز من الـ Worker (v3.7.0)
+// ══════════════════════════════════════════════════════════════
+// الهب (الشاشة الرئيسية · §HOME-DONE) كان بيعدّ ده في المتصفح بتصفيح get_logs.
+// هنا العدّ في SQL واحد: أوردرات **مميزة** لكل يوم قاهرة.
+// ⚠️ يوم القاهرة = UTC+3 ثابتة (نفس toCairo في shell.js) — date(timestamp,'+3 hours').
+//    ممنوع substr(timestamp,1,10) هنا: ده يوم UTC وبيفقد ٩م–١٢ص من يوم القاهرة.
+// ⚠️ التمييز **جوّه اليوم الواحد**: نفس الأوردر أمس واليوم بيتعدّ في اليومين.
+// ⚠️ read-only — صفر كتابة في D1.
+function cairoDays() {
+  const today = new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
+  const y = new Date(Date.parse(`${today}T00:00:00Z`) - 24 * 3600 * 1000).toISOString().slice(0, 10);
+  return { today, yesterday: y };
+}
+
+async function getDoneCounts(db) {
+  const { today, yesterday } = cairoDays();
+  // حد أدنى خشن على timestamp عشان الفهرس يشتغل (يوم زيادة أمان)، والفلتر الدقيق بـ date().
+  const coarse = new Date(Date.parse(`${yesterday}T00:00:00Z`) - 24 * 3600 * 1000).toISOString();
+  const rows = await db.prepare(
+    `SELECT date(timestamp, '+3 hours') AS day,
+            COUNT(DISTINCT REPLACE(TRIM(order_name), '#', '')) AS n
+       FROM logs
+      WHERE tool = 'metafields_change' AND type = 'update' AND extra LIKE ?
+        AND (CASE WHEN extra IS NOT NULL AND json_valid(extra)
+                  THEN COALESCE(json_extract(extra, '$.result'), '') ELSE '' END) IN ('success','warning')
+        AND order_name IS NOT NULL AND TRIM(order_name) <> ''
+        AND timestamp >= ?
+        AND date(timestamp, '+3 hours') >= ?
+      GROUP BY day`
+  ).bind(SOURCE_TOOL_LIKE, coarse, yesterday).all();
+  const out = { [today]: 0, [yesterday]: 0 };
+  for (const r of rows.results || []) if (r.day in out) out[r.day] = r.n;
+  return { today, yesterday, counts: { today: out[today], yesterday: out[yesterday] } };
+}
+
 export default {
   async fetch(request, env) {
     // 1. CORS Preflight — always first
@@ -1227,6 +1264,12 @@ export default {
       // قراءة بحتة — صفر كتابة على شوبيفاي وصفر صف في D1.
       if (action === 'get_ready_to_ship') {
         return handleReadyQueue(request, env);
+      }
+
+      // ─── §DONE-COUNTS ─────────────────────────────────────────
+      if (action === 'get_done_counts') {
+        const r = await getDoneCounts(env.DB);
+        return json({ ok: true, version: WORKER_VERSION, ...r }, 200, request);
       }
 
       // ─── §LOG-ENDPOINTS ─────────────────────────────────────────────────

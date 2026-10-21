@@ -2,7 +2,7 @@
 
 # سكانر شحن الأوردرات من بوسطة (`Bosta-Orders-Shipped-Scanner`)
 
-![version](https://img.shields.io/badge/version-v3.6.2-blue)
+![version](https://img.shields.io/badge/version-v3.7.0-blue)
 
 **بتعمل إيه:** الموظف بيسكان تراكينج نمرة بوسطة، الأداة بتتأكد من نوع الشحنة وحالتها الحالية على شوبيفاي (S1/S2)، ولو الانتقال صحيح بتكتب الحالة `Shipped` وتعمل Fulfillment تلقائي **وتحدّث عهدة الطرد لـ `Courier` (v3.6.0)**.
 **مين بيستخدمها:** المخزن — نقطة الشحن.
@@ -37,6 +37,7 @@
 > — لو أي أوردر مختار اتغيّرت حالته أو ما اتأكدتش، الدفعة بتتوقف ومفيش `update`
 > أصلاً. فحص الـ Worker وقت الكتابة باقي زي ما هو — ده حارس تاني مش بديل.
 | `get_logs` | سجل العمليات — فلاتر server-side كقوايم (`employees` · `types` · `results` · `machines`) + `search` + `dateFrom`/`dateTo` + pagination + **ترتيب server-side** (`sortBy`/`sortDir` بقائمة بيضاء مقفولة) |
+| `GET ?action=get_done_counts` | **(v3.7.0)** «اللي خلص النهارده / أمس» جاهز: أوردرات **مميزة** لكل يوم قاهرة (UTC+3) في SQL واحد — `{ today, yesterday, counts:{today,yesterday} }`. التعريف: `type = update` و`extra.result ∈ success/warning` (`already`/`rejected` مش بيتعدّوا) داخل نطاق `sourceTool`. قراءة بحتة، والهب (§HOME-DONE) بيقراه ولو مش موجود بيرجع لتصفيح `get_logs` |
 | `get_logs_count` | عدد الصفوف المطابقة **لنفس الفلاتر بالظبط** |
 | `get_logs_export` | تصدير كامل حتى `LOG_EXPORT_MAX` (2000) — وبيرجّع `cap` و`total` و`truncated` معاه |
 | `get_ready_to_ship` GET | **v3.5.0** — طابور «جاهز للتسليم لبوسطة»: قراءة شوبيفاي بحتة (صفر كتابة · صفر نداء بوسطة · صفر صف D1). بيرجّع `orders[]` + `counts` + `skipped` + `truncated` |
